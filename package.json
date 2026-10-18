@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "video": "node scripts/make-video.js",
+    "ranking-short": "node scripts/make-ranking-short.js",
     "analytics:import": "node scripts/import-analytics.js",
     "setup": "node setup.js",
     "walkthrough": "node walkthrough.js",
