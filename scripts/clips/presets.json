@@ -1,0 +1,22 @@
+{
+  "tjr": {
+    "creator": "TJR",
+    "minSeconds": 30,
+    "maxSeconds": 60,
+    "hashtags": ["#tjr", "#shorts"]
+  },
+  "pbinvesting": {
+    "creator": "PBInvesting",
+    "minSeconds": 15,
+    "maxSeconds": 30,
+    "mention": "@PBinvesting",
+    "hashtags": ["#PBInvesting", "#shorts"],
+    "disclaimer": "NOT FINANCIAL ADVICE",
+    "descriptionFooter": "Not financial advice. For education and entertainment only.",
+    "guidance": [
+      "Prefer memorable quotes, funny moments and clear mindset or trading lessons.",
+      "Never use P&L flexes, income claims or promised returns as the hook, and never portray PBInvesting negatively.",
+      "Skip ads, course pitches, sponsor reads and anything about crypto, gambling or prop-firm promotions."
+    ]
+  }
+}

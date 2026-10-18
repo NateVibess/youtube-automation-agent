@@ -25,6 +25,10 @@ You can edit `$W/clips.json` before rendering to change the timings or the on-sc
 
 `fetch-youtube --url URL [--cookies cookies.txt]` uses yt-dlp. Cloud IPs are usually blocked by YouTube's bot check, so export cookies from a signed-in browser, or run it on a home connection.
 
+`fetch-drive --id FILE_ID` downloads one public Google Drive file with `gdown` (`pip install gdown`). List a shared folder with `gdown --folder URL`.
+
+`--preset pbinvesting` selects 15–30s clips, adds `#PBInvesting` and `@PBinvesting` to the metadata, and burns in "NOT FINANCIAL ADVICE" when the clip is about trading. `--preset tjr` keeps the 30–60s default.
+
 ## Layout
 
 - **Corner webcam detected:** a split screen. The chart crop goes on top, above the webcam and left of the TradingView watchlist. Set `CLIPS_CHART_RIGHT=0.745` to change that edge. The face goes on the bottom, with a hook box on the seam and word-by-word captions above the face.
