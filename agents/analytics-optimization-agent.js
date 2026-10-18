@@ -1,6 +1,7 @@
 const { google } = require('googleapis');
 const { Logger } = require('../utils/logger');
 const { ChannelLearningEngine } = require('../utils/channel-learning-engine');
+const { isManualPublishMode } = require('../utils/publish-mode');
 
 const CHANNEL_SNAPSHOT_CACHE_MS = 3 * 60 * 1000;
 
@@ -42,6 +43,10 @@ class AnalyticsOptimizationAgent {
   }
 
   async setupAnalyticsAPI() {
+    if (isManualPublishMode()) {
+      this.logger.info('Manual posting mode: YouTube Analytics API disabled; import analytics with npm run analytics:import');
+      return;
+    }
     try {
       const auth = this.credentials.getYouTubeAuth();
       this.youtubeAnalytics = google.youtubeAnalytics({ version: 'v2', auth });

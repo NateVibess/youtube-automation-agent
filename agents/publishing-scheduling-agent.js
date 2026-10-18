@@ -4,6 +4,7 @@ const fsSync = require('fs');
 const path = require('path');
 const { Logger } = require('../utils/logger');
 const { assertValidYouTubeMetadata } = require('../utils/youtube-metadata-validator');
+const { isManualPublishMode } = require('../utils/publish-mode');
 
 class PublishingSchedulingAgent {
   constructor(db, credentials) {
@@ -22,6 +23,10 @@ class PublishingSchedulingAgent {
   }
 
   async setupYouTubeAPI() {
+    if (isManualPublishMode()) {
+      this.logger.info('Manual posting mode: YouTube upload disabled; finished videos are exported to output/');
+      return;
+    }
     try {
       const auth = this.credentials.getYouTubeAuth();
       this.youtube = google.youtube({ version: 'v3', auth });
@@ -99,6 +104,12 @@ class PublishingSchedulingAgent {
   }
 
   async publishContent(contentId, options = {}) {
+    if (isManualPublishMode()) {
+      const error = new Error('Manual posting mode is on (PUBLISH_MODE=manual): upload the exported package from output/ in YouTube Studio');
+      error.status = 409;
+      error.code = 'MANUAL_PUBLISH_MODE';
+      throw error;
+    }
     try {
       let productionBundle = null;
       if (this.db.getLatestReadinessRun) {
@@ -416,6 +427,7 @@ class PublishingSchedulingAgent {
   }
 
   async processPublishQueue() {
+    if (isManualPublishMode()) return 0;
     const now = new Date();
     const scheduled = this.publishQueue
       .filter(entry => entry.status === 'scheduled')

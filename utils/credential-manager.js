@@ -5,6 +5,7 @@ const inquirer = require('inquirer');
 const chalk = require('chalk');
 const { Logger } = require('./logger');
 const { PROVIDERS, GEMINI_MODELS, GEMINI_DEFAULT_MODEL } = require('./ai-text-service');
+const { isManualPublishMode } = require('./publish-mode');
 
 // API keys and OAuth tokens are owner-only (0600). writeFile's mode applies only
 // when the file is created, so files written by older versions are tightened too.
@@ -156,6 +157,10 @@ class CredentialManager {
 
     oauth2Client.setCredentials(this.tokens.youtube);
     return oauth2Client;
+  }
+
+  hasYouTubeAuth() {
+    return Boolean(this.credentials.youtube && this.tokens.youtube);
   }
 
   getYouTubeClient() {
@@ -532,7 +537,7 @@ class CredentialManager {
   getMissingCredentials() {
     const missing = [];
 
-    if (!this.credentials.youtube) {
+    if (!isManualPublishMode() && !this.credentials.youtube) {
       missing.push('youtube');
     }
 
@@ -560,7 +565,7 @@ class CredentialManager {
     }
 
     // Validate YouTube tokens
-    if (!this.tokens.youtube) {
+    if (!isManualPublishMode() && !this.tokens.youtube) {
       console.log(chalk.yellow('\n⚠️  YouTube authentication required'));
       return false;
     }

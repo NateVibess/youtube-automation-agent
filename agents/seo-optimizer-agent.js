@@ -33,9 +33,11 @@ class SEOOptimizerAgent {
       
       const aiSEO = await this.generateSEOWithAI(script, strategy);
       let title, description, tags;
+      let thumbnailTextOptions = [];
 
       if (aiSEO) {
         ({ title, description, tags } = aiSEO);
+        thumbnailTextOptions = aiSEO.thumbnailTextOptions || [];
       } else {
         this.logger.info('Using template SEO optimization');
         // Generate optimized title
@@ -64,6 +66,7 @@ class SEOOptimizerAgent {
         title,
         description,
         tags,
+        thumbnailTextOptions,
         hashtags,
         chapters,
         endScreen,
@@ -100,7 +103,8 @@ Return only valid JSON with this exact shape:
 {
   "title": "SEO title under 100 characters",
   "description": "YouTube description with useful summary and timestamps if relevant",
-  "tags": ["tag"]
+  "tags": ["tag"],
+  "thumbnailTextOptions": ["2-4 word thumbnail text"]
 }
 
 Video title: ${script.title}
@@ -109,6 +113,7 @@ Angle: ${strategy.angle}
 Content type: ${strategy.contentType}
 Target audience: ${strategy.targetAudience}
 Keywords: ${(strategy.keywords || []).join(', ')}
+${strategy.performanceBrief ? `Channel performance brief (favor title and thumbnail-text styles from the highest-CTR videos):\n${strategy.performanceBrief}\n` : ''}Give 3 short, high-contrast thumbnail text options that complement (not repeat) the title.
 Keep tags under YouTube's 500 character total guidance. Avoid fabricated statistics and unsupported claims.`;
 
     try {
@@ -127,7 +132,10 @@ Keep tags under YouTube's 500 character total guidance. Avoid fabricated statist
       return {
         title: String(parsed.title).trim().slice(0, 100),
         description: String(parsed.description).trim().slice(0, 5000),
-        tags
+        tags,
+        thumbnailTextOptions: Array.isArray(parsed.thumbnailTextOptions)
+          ? parsed.thumbnailTextOptions.map(text => String(text).trim()).filter(Boolean).slice(0, 5)
+          : []
       };
     } catch (error) {
       this.logger.warn(`AI SEO optimization failed; using template fallback: ${error.message}`);

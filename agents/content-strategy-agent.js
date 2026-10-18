@@ -1,4 +1,5 @@
 const { Logger } = require('../utils/logger');
+const { loadPerformanceBrief } = require('../utils/manual-analytics');
 const { AITextService } = require('../utils/ai-text-service');
 
 class ContentStrategyAgent {
@@ -48,6 +49,7 @@ class ContentStrategyAgent {
   }
 
   async fetchYouTubeTrends() {
+    if (!this.canUseYouTubeAPI()) return [];
     // Use YouTube API to fetch trending videos
     const youtube = this.credentials.getYouTubeClient();
     
@@ -99,7 +101,12 @@ class ContentStrategyAgent {
     return competitorData;
   }
 
+  canUseYouTubeAPI() {
+    return typeof this.credentials?.hasYouTubeAuth !== 'function' || this.credentials.hasYouTubeAuth();
+  }
+
   async getChannelVideos(channelId) {
+    if (!this.canUseYouTubeAPI()) return [];
     const youtube = this.credentials.getYouTubeClient();
     
     try {
@@ -226,11 +233,11 @@ class ContentStrategyAgent {
       .slice(0, 50);
   }
 
-  async generateContentStrategy(requestedTopic = null) {
+  async generateContentStrategy(requestedTopic = null, options = {}) {
     try {
       let topic, angle, targetAudience, contentType;
 
-      const aiStrategy = await this.generateContentStrategyWithAI(requestedTopic);
+      const aiStrategy = await this.generateContentStrategyWithAI(requestedTopic, options);
       if (aiStrategy) {
         await this.db.saveContentStrategy(aiStrategy);
         this.logger.info(`Generated AI strategy for: ${aiStrategy.topic}`);
@@ -310,6 +317,7 @@ class ContentStrategyAgent {
       signals,
       sourceCatalog,
       recentTopics: recentRows.map(row => row.topic),
+      performanceBrief: await loadPerformanceBrief().catch(() => null),
       competitorChannelsAnalyzed: this.competitorData.length,
       approvedLearnings: approvedLearnings.map(item => ({
         category: item.category,
@@ -352,7 +360,7 @@ Research signals: ${JSON.stringify(research.signals)}
 Allowed source catalog: ${JSON.stringify(research.sourceCatalog)}
 Recent topics to avoid repeating: ${JSON.stringify(research.recentTopics)}
 Operator-approved performance learnings to apply: ${JSON.stringify(research.approvedLearnings)}
-
+${research.performanceBrief ? `Creator-supplied YouTube Studio performance brief (treat as approved evidence):\n${research.performanceBrief}\n` : ''}
 Do not invent trend data, statistics, sources, URLs, or factual claims. Use only exact URLs from the supplied source catalog. Apply only the supplied approved learnings; pending or rejected recommendations are not authorized. Prefer evergreen topics when the supplied signals are weak. Learnings with category "audience_demand" are audience-requested topics mined from real comments on published videos; prefer planning a video that directly answers one when it fits the channel objective, and cite it in the rationale.`;
 
     try {
@@ -420,7 +428,7 @@ Do not invent trend data, statistics, sources, URLs, or factual claims. Use only
       .slice(0, targetCount);
   }
 
-  async generateContentStrategyWithAI(requestedTopic = null) {
+  async generateContentStrategyWithAI(requestedTopic = null, options = {}) {
     if (!this.aiTextService.isAvailable()) {
       this.logger.info('Using template content strategy generation because no AI text provider is configured');
       return null;
@@ -443,7 +451,7 @@ Return only valid JSON with this exact shape:
 Requested topic: ${requestedTopic || 'none'}
 Trending topics available: ${trendingTopics || 'Technology Trends'}
 Channel target audience: ${process.env.TARGET_AUDIENCE || 'General audience interested in educational content'}
-Avoid fabricated claims and unsupported numbers.`;
+${options.performanceBrief ? `Channel performance brief (use it to choose the topic and angle; when a topic was requested, use it only for the angle):\n${options.performanceBrief}\n` : ''}Avoid fabricated claims and unsupported numbers.`;
 
     try {
       const response = await this.aiTextService.generateText(prompt, {

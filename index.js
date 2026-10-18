@@ -27,6 +27,9 @@ const { AudienceEngagementService } = require('./utils/audience-engagement-servi
 const { GrowthExperimentService } = require('./utils/growth-experiment-service');
 const { AITextService } = require('./utils/ai-text-service');
 const { DiscoverabilityService } = require('./utils/discoverability-service');
+const { isManualPublishMode } = require('./utils/publish-mode');
+const { exportPostPackage } = require('./utils/post-package-exporter');
+const { loadPerformanceBrief } = require('./utils/manual-analytics');
 const { version } = require('./package.json');
 const chalk = require('chalk');
 
@@ -58,7 +61,7 @@ class YouTubeAutomationAgent {
     this.setupRequired = false;
   }
 
-  async initialize() {
+  async initialize(options = {}) {
     try {
       console.log(chalk.cyan.bold(`\n🎬 YouTube Automation Agent v${version}`));
       console.log(chalk.gray('─'.repeat(50)));
@@ -135,6 +138,12 @@ class YouTubeAutomationAgent {
       // Setup API endpoints
       this.setupAPI();
       
+      if (options.scheduler === false) {
+        this.isInitialized = true;
+        this.logger.success('YouTube Automation Agent initialized (scheduler disabled)');
+        return true;
+      }
+
       // Initialize scheduler
       this.logger.info('Setting up automation scheduler...');
       this.scheduler = new DailyAutomation(this.agents, this.db, {
@@ -190,14 +199,17 @@ class YouTubeAutomationAgent {
       hasGemini
     );
     const hasFFmpeg = await checkFFmpeg();
-    const hasUpload = Boolean(creds.youtube && this.credentials.tokens?.youtube);
+    const manualPublish = isManualPublishMode();
+    const hasUpload = manualPublish || Boolean(creds.youtube && this.credentials.tokens?.youtube);
 
     const capabilities = [
       { name: 'Script & strategy generation', ok: hasText, hint: 'configure an AI provider (npm run credentials:setup)' },
       { name: 'Image generation (visuals/thumbnails)', ok: hasImages, hint: 'requires an OpenAI or Gemini API key — otherwise gradient slides are used' },
       { name: 'Voice narration (TTS)', ok: hasTTS, hint: 'configure OpenAI, Gemini, ElevenLabs, or Azure Speech — otherwise videos are silent' },
       { name: 'Video assembly (FFmpeg)', ok: hasFFmpeg, hint: ffmpegInstallHint() },
-      { name: 'YouTube upload', ok: hasUpload, hint: 'run: npm run credentials:setup' }
+      manualPublish
+        ? { name: 'YouTube upload: off (manual posting; packages go to output/)', ok: true }
+        : { name: 'YouTube upload', ok: hasUpload, hint: 'run: npm run credentials:setup' }
     ];
 
     console.log(chalk.cyan('\n🔎 Capability check:'));
@@ -1417,7 +1429,7 @@ class YouTubeAutomationAgent {
         progress: 100,
         productionId: result.contentId,
         title: result.title,
-        details: { reviewStatus: result.reviewStatus, qualityScore: result.qualityScore },
+        details: { reviewStatus: result.reviewStatus, qualityScore: result.qualityScore, packageDir: result.packageDir || null },
         completedAt: new Date().toISOString()
       });
       await this.db.setSetting('last_content_generation', new Date().toISOString());
@@ -1464,7 +1476,12 @@ class YouTubeAutomationAgent {
 
     // Step 1: Strategy
     const strategy = await this.runGenerationStage(jobId, 'strategy', 10, async () => {
-      const generated = await this.agents.strategy.generateContentStrategy(topic);
+      const performanceBrief = await loadPerformanceBrief().catch(error => {
+        this.logger.warn(`Performance brief unavailable: ${error.message}`);
+        return null;
+      });
+      const generated = await this.agents.strategy.generateContentStrategy(topic, { performanceBrief });
+      generated.performanceBrief = performanceBrief;
       const contentStyles = new Set(['tutorial', 'explainer', 'list', 'review', 'story']);
       const requestedStyle = style || profile.default_style || null;
       if (requestedStyle && contentStyles.has(requestedStyle.toLowerCase())) {
@@ -1558,7 +1575,17 @@ class YouTubeAutomationAgent {
       });
 
       let scheduleEntry = null;
-      if (reviewStatus === 'approved') {
+      let postPackage = null;
+      if (isManualPublishMode()) {
+        postPackage = await exportPostPackage(productionData, {
+          reviewStatus,
+          qualityChecks: quality.checks
+        });
+        this.logger.success(`Post package ready: ${postPackage.dir}`);
+      }
+      if (reviewStatus === 'approved' && isManualPublishMode()) {
+        await this.db.updateProductionStatus(contentId, 'ready_to_post');
+      } else if (reviewStatus === 'approved') {
         scheduleEntry = await this.agents.publishing.scheduleContent(productionData);
         await this.db.updateProductionStatus(contentId, scheduleEntry ? 'scheduled' : productionData.status);
       } else {
@@ -1578,7 +1605,8 @@ class YouTubeAutomationAgent {
         status: productionData.status,
         reviewStatus,
         qualityScore: quality.score,
-        scheduledFor: scheduleEntry ? scheduleEntry.publishTime : null
+        scheduledFor: scheduleEntry ? scheduleEntry.publishTime : null,
+        packageDir: postPackage ? postPackage.dir : null
       };
     });
   }
@@ -1800,6 +1828,25 @@ class YouTubeAutomationAgent {
       throw error;
     }
 
+    if (isManualPublishMode()) {
+      const postPackage = await exportPostPackage({ ...bundle, ...productionData, created_at: bundle.created_at }, {
+        editorData,
+        reviewStatus: 'approved',
+        qualityChecks: quality.checks
+      });
+      await this.db.saveContentReview(bundle.id, {
+        status: 'approved', editorData, qualityChecks: quality.checks,
+        reviewNotes: input.reviewNotes || 'Approved by operator', reviewedAt: new Date().toISOString()
+      });
+      await this.db.updateProductionStatus(bundle.id, 'ready_to_post');
+      await this.operator.notify({
+        type: 'content_approved', level: 'success', title: 'Ready to post',
+        message: `${productionData.script.title} was exported to ${postPackage.dir}`,
+        data: { productionId, packageDir: postPackage.dir }
+      });
+      return { productionId, reviewStatus: 'approved', qualityScore: quality.score, schedule: null, packageDir: postPackage.dir };
+    }
+
     let scheduleEntry = bundle.schedule;
     if (!scheduleEntry) {
       scheduleEntry = await this.agents.publishing.scheduleContent(productionData);
@@ -1864,6 +1911,8 @@ class YouTubeAutomationAgent {
       console.log(chalk.gray('─'.repeat(50)));
       if (this.setupRequired) {
         console.log(chalk.yellow('\n⚙️  Setup is required. The dashboard is available; run npm run walkthrough to enable generation.'));
+      } else if (isManualPublishMode()) {
+        console.log(chalk.yellow('\n📦 Manual posting mode. Finished videos are exported to output/ for you to upload.'));
       } else {
         console.log(chalk.yellow('\n🤖 Automation is active. Approved content will be published on schedule.'));
       }
