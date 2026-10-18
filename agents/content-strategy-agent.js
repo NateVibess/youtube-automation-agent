@@ -455,6 +455,7 @@ ${options.performanceBrief ? `Channel performance brief (use it to choose the to
 
     try {
       const response = await this.aiTextService.generateText(prompt, {
+        json: true,
         maxTokens: 1000,
         temperature: 0.7
       });

@@ -36,6 +36,16 @@ async function main() {
     console.log(chalk.yellow('PUBLISH_MODE=youtube is set: this run will also use the YouTube upload workflow.'));
   }
 
+  if (!process.env.VIDEO_PROVIDER || process.env.VIDEO_PROVIDER === 'slideshow') {
+    const fs = require('fs');
+    const { chromium } = require('playwright');
+    if (!fs.existsSync(chromium.executablePath())) {
+      console.error(chalk.red('The slideshow renderer needs a one-time browser download. Run:'));
+      console.error('  npx playwright install --with-deps chromium');
+      return 1;
+    }
+  }
+
   const agent = new YouTubeAutomationAgent();
   const ready = await agent.initialize({ scheduler: false });
   if (!ready || agent.setupRequired) {
@@ -61,7 +71,10 @@ async function main() {
   }
 
   const packageDir = finished.details?.packageDir;
-  console.log(chalk.green(`\nDone: "${finished.title}" (review status: ${finished.details?.reviewStatus || 'n/a'})`));
+  const postTitle = packageDir
+    ? require('fs').readFileSync(require('path').join(packageDir, 'title.txt'), 'utf8').trim()
+    : finished.title;
+  console.log(chalk.green(`\nDone: "${postTitle}" (review status: ${finished.details?.reviewStatus || 'n/a'})`));
   if (packageDir) {
     console.log(chalk.green(`Post package: ${packageDir}`));
     console.log('Open CHECKLIST.md in that folder before posting.');

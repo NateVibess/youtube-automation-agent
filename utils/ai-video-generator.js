@@ -61,6 +61,24 @@ function describeImageProviderError(provider, model, error) {
   return fix ? `${summary} Fix: ${fix} Details: ${shortDetail}` : `${summary} ${shortDetail}`;
 }
 
+const GEMINI_TTS_CHUNK_CHARS = 1500;
+
+function splitTextForTTS(text, maxChars) {
+  const sentences = String(text || '').replace(/\s+/g, ' ').trim().split(/(?<=[.!?])\s+/).filter(Boolean);
+  const chunks = [];
+  let current = '';
+  for (const sentence of sentences) {
+    if (current && current.length + sentence.length + 1 > maxChars) {
+      chunks.push(current);
+      current = sentence;
+    } else {
+      current = current ? `${current} ${sentence}` : sentence;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks.length ? chunks : [String(text || '')];
+}
+
 class AIVideoGenerator {
   constructor(credentials, options = {}) {
     this.logger = new Logger('AIVideoGenerator');
@@ -217,32 +235,43 @@ class AIVideoGenerator {
     const model = process.env.GEMINI_TTS_MODEL || 'gemini-3.1-flash-tts-preview';
     const voiceName = process.env.GEMINI_TTS_VOICE || 'Kore';
 
-    const response = await this.gemini.models.generateContent({
-      model,
-      contents: [{ parts: [{ text }] }],
-      config: {
-        responseModalities: ['AUDIO'],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName }
-          }
-        }
-      }
-    });
-
-    const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    if (!audioData) {
-      throw new Error('Gemini TTS returned no audio data');
+    // Long single requests can come back without audio, so narrate sentence-packed chunks and join the PCM.
+    const chunks = splitTextForTTS(text, GEMINI_TTS_CHUNK_CHARS);
+    const pcmParts = [];
+    for (const chunk of chunks) {
+      pcmParts.push(await this.generateGeminiTTSChunk(chunk, model, voiceName));
     }
 
     // Gemini returns raw PCM (24kHz, mono, 16-bit); encode to the requested container via FFmpeg
     const pcmPath = outputPath + '.pcm';
-    await fs.writeFile(pcmPath, Buffer.from(audioData, 'base64'));
+    await fs.writeFile(pcmPath, Buffer.concat(pcmParts));
     await runFFmpeg(['-y', '-f', 's16le', '-ar', '24000', '-ac', '1', '-i', pcmPath, outputPath]);
     await fs.unlink(pcmPath).catch(() => {});
 
     this.logger.info('Gemini TTS generation complete');
     return outputPath;
+  }
+
+  async generateGeminiTTSChunk(text, model, voiceName, attempts = 2) {
+    let finishReason = null;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const response = await this.gemini.models.generateContent({
+        model,
+        contents: [{ parts: [{ text }] }],
+        config: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName }
+            }
+          }
+        }
+      });
+      const data = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (data) return Buffer.from(data, 'base64');
+      finishReason = response.candidates?.[0]?.finishReason || null;
+    }
+    throw new Error(`Gemini TTS returned no audio data${finishReason ? ` (finish reason: ${finishReason})` : ''}`);
   }
 
   async generateVisualAssets(prompt, style = "ethereal", count = 1) {
@@ -1075,4 +1104,4 @@ class AIVideoGenerator {
   }
 }
 
-module.exports = { AIVideoGenerator, describeImageProviderError };
+module.exports = { AIVideoGenerator, describeImageProviderError, splitTextForTTS };

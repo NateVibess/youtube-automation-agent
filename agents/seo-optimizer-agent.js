@@ -102,7 +102,7 @@ class SEOOptimizerAgent {
 Return only valid JSON with this exact shape:
 {
   "title": "SEO title under 100 characters",
-  "description": "YouTube description with useful summary and timestamps if relevant",
+  "description": "YouTube description with a useful summary (no timestamps or chapter list; real timings are unknown)",
   "tags": ["tag"],
   "thumbnailTextOptions": ["2-4 word thumbnail text"]
 }
@@ -118,7 +118,8 @@ Keep tags under YouTube's 500 character total guidance. Avoid fabricated statist
 
     try {
       const response = await this.aiTextService.generateText(prompt, {
-        maxTokens: 1400,
+        json: true,
+        maxTokens: 4000,
         temperature: 0.6
       });
       const parsed = this.parseAIJsonResponse(response);

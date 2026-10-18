@@ -10,6 +10,8 @@ const { normalizeTags, validateYouTubeMetadata } = require('./utils/youtube-meta
 
 // The upstream suite covers the direct-upload workflow; manual-posting tests switch modes locally.
 process.env.PUBLISH_MODE = 'youtube';
+process.env.OUTPUT_DIR = require('fs').mkdtempSync(path.join(require('os').tmpdir(), 'yaa-test-output-'));
+process.env.ANALYTICS_DIR = require('fs').mkdtempSync(path.join(require('os').tmpdir(), 'yaa-test-analytics-'));
 
 class SystemTest {
   constructor() {
@@ -71,7 +73,8 @@ class SystemTest {
       { name: 'Engagement Sync Schedule', test: () => this.testEngagementSyncSchedule() },
       { name: 'Growth Experiment Refresh Schedule', test: () => this.testGrowthExperimentRefreshSchedule() },
       { name: 'Manual Posting Mode', test: () => this.testManualPostingMode() },
-      { name: 'Manual Analytics Feedback Loop', test: () => this.testManualAnalyticsLoop() }
+      { name: 'Manual Analytics Feedback Loop', test: () => this.testManualAnalyticsLoop() },
+      { name: 'Gemini TTS Chunking', test: () => this.testGeminiTTSChunking() }
     ];
 
     let passed = 0;
@@ -3225,7 +3228,8 @@ class SystemTest {
           strategy: { topic: 'Top 10 Deadliest Animals', contentType: 'List' },
           script: { title: 'Top 10 Deadliest Animals', claims: [{ text: 'Mosquitoes kill the most people', riskLevel: 'high' }] },
           seo: { title: 'Top 10 Deadliest Animals Ranked', description: 'A countdown.', tags: ['animals', 'ranked'], thumbnailTextOptions: ['NOT SHARKS'] },
-          assets: { finalVideo: { path: videoPath }, thumbnail: { path: thumbPath } }
+          thumbnail: { path: thumbPath },
+          assets: { finalVideo: { path: videoPath }, thumbnail: { path: path.join(tmp, 'failed.info') } }
         }, { outputRoot: tmp, qualityChecks: [{ id: 'video', passed: true, blocking: true }] });
         const files = await fs.readdir(pkg.dir);
         for (const expected of ['video.mp4', 'thumbnail.png', 'title.txt', 'description.txt', 'tags.txt', 'metadata.json', 'CHECKLIST.md']) {
@@ -3301,6 +3305,45 @@ class SystemTest {
       }
     } finally {
       await fs.rm(root, { recursive: true, force: true });
+    }
+  }
+
+  async testGeminiTTSChunking() {
+    const fs = require('fs').promises;
+    const os = require('os');
+    const { AIVideoGenerator, splitTextForTTS } = require('./utils/ai-video-generator');
+
+    const sentence = 'The cheetah is the fastest land animal on the planet today. ';
+    const text = sentence.repeat(60);
+    const chunks = splitTextForTTS(text, 1500);
+    if (chunks.length < 2 || chunks.some(chunk => chunk.length > 1500) || chunks.join(' ') !== text.trim()) {
+      throw new Error('Narration must split on sentence boundaries without losing text');
+    }
+
+    const calls = [];
+    let emptyOnce = true;
+    const generator = Object.create(AIVideoGenerator.prototype);
+    generator.logger = new Logger('TTSChunkTest');
+    generator.gemini = {
+      models: {
+        generateContent: async ({ contents }) => {
+          calls.push(contents[0].parts[0].text);
+          if (emptyOnce) {
+            emptyOnce = false;
+            return { candidates: [{ finishReason: 'OTHER', content: { parts: [] } }] };
+          }
+          return { candidates: [{ content: { parts: [{ inlineData: { data: Buffer.alloc(4800).toString('base64') } }] } }] };
+        }
+      }
+    };
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-tts-'));
+    try {
+      const output = await generator.generateGeminiTTS(text, path.join(dir, 'narration.mp3'));
+      if (calls.length !== chunks.length + 1 || !(await fs.stat(output)).size) {
+        throw new Error('Each chunk must be narrated, with one retry after an empty response');
+      }
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
     }
   }
 

@@ -7,6 +7,8 @@ const GEMINI_MODELS = [
   'gemini-3.5-flash-lite',
 ];
 const GEMINI_DEFAULT_MODEL = GEMINI_MODELS[0];
+const TRANSIENT_RETRY_DELAYS_MS = [3000, 10000];
+
 // Floor for the single retry after a thinking model exhausts a small budget.
 const GEMINI_THINKING_RETRY_MIN_TOKENS = 1024;
 
@@ -110,11 +112,12 @@ class AITextService {
     if (this.gemini) {
       const config = { maxOutputTokens: maxTokens };
       if (!/^gemini-3\.(?:[5-9]|\d{2,})-/.test(model)) config.temperature = temperature;
-      let response = await this.gemini.models.generateContent({
+      if (options.json) config.responseMimeType = 'application/json';
+      let response = await this._withTransientRetry(() => this.gemini.models.generateContent({
         model,
         contents: prompt,
         config,
-      });
+      }));
       let text = response && response.text;
 
       // Thinking models (gemini-3.x flash/pro) count thoughts against
@@ -122,11 +125,11 @@ class AITextService {
       // written. Retry once with room for the thoughts plus the answer.
       if (!this._hasText(text) && this._geminiFinishReason(response) === 'MAX_TOKENS') {
         const retryTokens = Math.max(maxTokens * 4, GEMINI_THINKING_RETRY_MIN_TOKENS);
-        response = await this.gemini.models.generateContent({
+        response = await this._withTransientRetry(() => this.gemini.models.generateContent({
           model,
           contents: prompt,
           config: { ...config, maxOutputTokens: retryTokens },
-        });
+        }));
         text = response && response.text;
       }
 
@@ -190,6 +193,25 @@ class AITextService {
     }
 
     throw lastError;
+  }
+
+  // Retries "high demand" 503s, 500s, and per-minute rate limits. Quota exhaustion
+  // (RESOURCE_EXHAUSTED with a billing/quota message) is not transient and fails fast.
+  async _withTransientRetry(call, delaysMs = TRANSIENT_RETRY_DELAYS_MS) {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await call();
+      } catch (error) {
+        const message = String(error?.message || '');
+        const status = Number(error?.status || error?.code || (message.match(/"code":\s*(\d{3})/) || [])[1]);
+        const quota = /quota|billing|per day|exceeded your current/i.test(message);
+        const transient = [500, 502, 503, 504].includes(status) || /UNAVAILABLE|high demand|overloaded/i.test(message)
+          || (status === 429 && !quota);
+        if (!transient || attempt >= delaysMs.length) throw error;
+        this.logger.warn(`${this.providerName} temporarily unavailable; retrying in ${delaysMs[attempt] / 1000}s`);
+        await new Promise(resolve => setTimeout(resolve, delaysMs[attempt]));
+      }
+    }
   }
 
   _hasText(text) {

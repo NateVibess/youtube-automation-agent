@@ -139,7 +139,9 @@ ${strategy.performanceBrief ? `Channel performance brief (apply the title, hook,
 
     try {
       const response = await this.aiTextService.generateText(prompt, {
-        maxTokens: 1800,
+        json: true,
+        // Thinking models spend part of this budget before writing; long scripts need the headroom.
+        maxTokens: 12000,
         temperature: 0.7
       });
       const parsed = this.parseAIJsonResponse(response);

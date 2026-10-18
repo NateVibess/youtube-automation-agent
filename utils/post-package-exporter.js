@@ -23,6 +23,8 @@ function normalizeTitle(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+
 function fileExists(filePath) {
   return Boolean(filePath) && fsSync.existsSync(filePath) && fsSync.statSync(filePath).isFile();
 }
@@ -80,7 +82,7 @@ function buildChecklist(pkg) {
   lines.push(
     '## Before you post',
     '- Watch the whole video once.',
-    '- Check the facts listed above.',
+    pkg.claimsToVerify.length ? '- Check the facts listed above.' : '- Spot-check any rankings, numbers, or records stated in the video.',
     '- Set YouTube "Altered or synthetic content" if the video shows realistic AI-generated people, places, or events.',
     '',
     '## After you post',
@@ -115,13 +117,17 @@ async function exportPostPackage(production, options = {}) {
   await fs.mkdir(dir, { recursive: true });
 
   const thumbnailVariant = editor.packagingExperiment?.thumbnailVariants?.[editor.selectedThumbnailVariant];
-  const thumbnailSource = thumbnailVariant?.path || assets.thumbnail?.path || production.thumbnail?.path;
+  // A failed AI thumbnail leaves a non-image placeholder; fall back to the designer's template image.
+  const thumbnailSource = [thumbnailVariant?.path, assets.thumbnail?.path, production.thumbnail?.path]
+    .find(candidate => fileExists(candidate) && IMAGE_EXTENSIONS.has(path.extname(candidate).toLowerCase()));
   const finalVideo = assets.finalVideo || {};
   const realVideo = !finalVideo.simulated && path.extname(finalVideo.path || '').toLowerCase() === '.mp4';
 
   const files = {
     video: realVideo ? await copyIfPresent(finalVideo.path, path.join(dir, 'video.mp4')) : null,
-    thumbnail: await copyIfPresent(thumbnailSource, path.join(dir, `thumbnail${path.extname(thumbnailSource || '.png') || '.png'}`)),
+    thumbnail: thumbnailSource
+      ? await copyIfPresent(thumbnailSource, path.join(dir, `thumbnail${path.extname(thumbnailSource).toLowerCase()}`))
+      : null,
     captions: await copyIfPresent(assets.captions?.path, path.join(dir, 'captions.srt'))
   };
 
