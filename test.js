@@ -8,6 +8,9 @@ const path = require('path');
 const { ProductionReadinessService } = require('./utils/production-readiness-service');
 const { normalizeTags, validateYouTubeMetadata } = require('./utils/youtube-metadata-validator');
 
+// The upstream suite covers the direct-upload workflow; manual-posting tests switch modes locally.
+process.env.PUBLISH_MODE = 'youtube';
+
 class SystemTest {
   constructor() {
     this.logger = new Logger('SystemTest');
@@ -66,7 +69,9 @@ class SystemTest {
       { name: 'Reply Approval and Posting', test: () => this.testReplyApprovalAndPosting() },
       { name: 'Engagement AI Provider Wiring', test: () => this.testEngagementAIProviderWiring() },
       { name: 'Engagement Sync Schedule', test: () => this.testEngagementSyncSchedule() },
-      { name: 'Growth Experiment Refresh Schedule', test: () => this.testGrowthExperimentRefreshSchedule() }
+      { name: 'Growth Experiment Refresh Schedule', test: () => this.testGrowthExperimentRefreshSchedule() },
+      { name: 'Manual Posting Mode', test: () => this.testManualPostingMode() },
+      { name: 'Manual Analytics Feedback Loop', test: () => this.testManualAnalyticsLoop() }
     ];
 
     let passed = 0;
@@ -3160,6 +3165,143 @@ class SystemTest {
     timer.end();
     
     this.logger.info('Logger test completed successfully');
+  }
+
+  async withPublishMode(mode, fn) {
+    const saved = process.env.PUBLISH_MODE;
+    process.env.PUBLISH_MODE = mode;
+    try {
+      return await fn();
+    } finally {
+      process.env.PUBLISH_MODE = saved;
+    }
+  }
+
+  async testManualPostingMode() {
+    const fs = require('fs').promises;
+    const os = require('os');
+    const { PublishingSchedulingAgent } = require('./agents/publishing-scheduling-agent');
+    const { exportPostPackage } = require('./utils/post-package-exporter');
+
+    await this.withPublishMode('manual', async () => {
+      const manager = new CredentialManager();
+      manager.credentials = { gemini: { apiKey: 'gm-test' } };
+      if (manager.getMissingCredentials().length !== 0) {
+        throw new Error('Manual posting mode must not require YouTube credentials');
+      }
+
+      const passingProbe = label => async () => ({ message: `${label} verified` });
+      let youtubeProbed = false;
+      const readiness = new ProductionReadinessService({ saveReadinessRun: async () => {} }, { credentials: {} }, {
+        probes: {
+          text: passingProbe('Text'), image: passingProbe('Image'), videoProvider: passingProbe('Video provider'),
+          narration: passingProbe('Narration'), videoAssembly: passingProbe('Video'), metadata: passingProbe('Metadata'),
+          youtube: async () => { youtubeProbed = true; throw new Error('should not run'); }
+        }
+      });
+      const run = await readiness.run();
+      if (youtubeProbed || run.status !== 'passed' || run.checks.some(check => check.id === 'youtube_access')) {
+        throw new Error('Readiness must skip YouTube channel access in manual posting mode');
+      }
+
+      const publishing = new PublishingSchedulingAgent(
+        { getPublishQueue: async () => [] },
+        { getYouTubeAuth: () => { throw new Error('YouTube credentials not configured'); } }
+      );
+      await publishing.initialize();
+      if (await publishing.processPublishQueue() !== 0) throw new Error('Manual mode must never process the upload queue');
+      const blocked = await publishing.publishContent('prod_1').then(() => null, error => error);
+      if (blocked?.code !== 'MANUAL_PUBLISH_MODE') throw new Error('Manual mode must refuse direct uploads');
+
+      const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-package-'));
+      try {
+        const videoPath = path.join(tmp, 'final.mp4');
+        const thumbPath = path.join(tmp, 'thumb.png');
+        await fs.writeFile(videoPath, 'fake-mp4');
+        await fs.writeFile(thumbPath, 'fake-png');
+        const pkg = await exportPostPackage({
+          id: 'prod_abc123',
+          createdAt: '2026-10-18T12:00:00.000Z',
+          strategy: { topic: 'Top 10 Deadliest Animals', contentType: 'List' },
+          script: { title: 'Top 10 Deadliest Animals', claims: [{ text: 'Mosquitoes kill the most people', riskLevel: 'high' }] },
+          seo: { title: 'Top 10 Deadliest Animals Ranked', description: 'A countdown.', tags: ['animals', 'ranked'], thumbnailTextOptions: ['NOT SHARKS'] },
+          assets: { finalVideo: { path: videoPath }, thumbnail: { path: thumbPath } }
+        }, { outputRoot: tmp, qualityChecks: [{ id: 'video', passed: true, blocking: true }] });
+        const files = await fs.readdir(pkg.dir);
+        for (const expected of ['video.mp4', 'thumbnail.png', 'title.txt', 'description.txt', 'tags.txt', 'metadata.json', 'CHECKLIST.md']) {
+          if (!files.includes(expected)) throw new Error(`Post package is missing ${expected}`);
+        }
+        if ((await fs.readFile(path.join(pkg.dir, 'tags.txt'), 'utf8')).trim() !== 'animals, ranked') {
+          throw new Error('tags.txt must be a paste-ready comma-separated list');
+        }
+        const checklist = await fs.readFile(path.join(pkg.dir, 'CHECKLIST.md'), 'utf8');
+        if (!pkg.readyToPost || !checklist.includes('Mosquitoes kill the most people') || !checklist.includes('NOT SHARKS')) {
+          throw new Error('CHECKLIST.md must list claims to verify and thumbnail text ideas');
+        }
+
+        const simulated = await exportPostPackage({
+          id: 'prod_sim999', script: { title: 'Simulated' }, assets: { finalVideo: { path: videoPath, simulated: true } }
+        }, { outputRoot: tmp });
+        if (simulated.readyToPost || simulated.files.video) throw new Error('Simulated video must never be packaged as ready');
+      } finally {
+        await fs.rm(tmp, { recursive: true, force: true });
+      }
+    });
+  }
+
+  async testManualAnalyticsLoop() {
+    const fs = require('fs').promises;
+    const os = require('os');
+    const { parseAnalyticsCSV, importAnalytics, loadPerformanceBrief } = require('./utils/manual-analytics');
+
+    const studioCsv = [
+      'Content,Video title,Video publish time,Duration,Views,Watch time (hours),Subscribers,Impressions,Impressions click-through rate (%),Average view duration,Average percentage viewed (%)',
+      'Total,,,,"12,500",410.2,95,"150,000",6.1,0:02:10,41.0',
+      'vid1,Top 10 Deadliest Animals Ranked,"Oct 1, 2026",600,"8,000",300,70,"90,000",8.9,0:03:30,52.5',
+      'vid2,Why Sharks Are Misunderstood,"Oct 5, 2026",540,"1,500",40,5,"30,000",3.2,0:01:20,28.0',
+      'vid3,Top 5 Fastest Cars,"Oct 9, 2026",480,"3,000",70,20,"30,000",7.5,0:02:40,45.0'
+    ].join('\r\n');
+    const parsed = parseAnalyticsCSV(studioCsv, 'Table data.csv');
+    if (parsed.length !== 3 || parsed[0].views !== 8000 || parsed[0].avgViewDurationSec !== 210 || parsed[0].ctr !== 8.9) {
+      throw new Error('YouTube Studio CSV export was not parsed correctly (Total row, quoted numbers, durations)');
+    }
+
+    const template = 'video_title,views,impressions,ctr_percent,avg_view_duration,avg_percent_viewed,notes\nWhy Sharks Are Misunderstood,1600,,,,,"Comments asked for a part 2"\n';
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'yaa-analytics-'));
+    const outputRoot = path.join(root, 'output');
+    try {
+      await fs.mkdir(path.join(root, 'inbox'), { recursive: true });
+      await fs.mkdir(path.join(outputRoot, '2026-10-01_top-10'), { recursive: true });
+      await fs.writeFile(path.join(outputRoot, '2026-10-01_top-10', 'metadata.json'), JSON.stringify({
+        packageId: 'prod_1', title: 'Top 10 Deadliest Animals Ranked', topic: 'Deadliest animals', createdAt: '2026-10-01'
+      }));
+      await fs.writeFile(path.join(root, 'inbox', '2026-10-10-studio.csv'), studioCsv);
+      await fs.writeFile(path.join(root, 'inbox', '2026-10-12-manual.csv'), template);
+
+      const result = await importAnalytics({ root, outputRoot });
+      if (result.videoCount !== 3 || result.linkedCount !== 1) {
+        throw new Error(`Expected 3 videos with 1 linked package, got ${result.videoCount}/${result.linkedCount}`);
+      }
+      if ((await fs.readdir(path.join(root, 'inbox'))).length !== 0) throw new Error('Imported CSVs must be archived');
+      const sharks = Object.values(JSON.parse(await fs.readFile(path.join(root, 'performance.json'), 'utf8')).videos)
+        .find(video => video.title === 'Why Sharks Are Misunderstood');
+      if (sharks.views !== 1600 || sharks.ctr !== 3.2 || sharks.notes !== 'Comments asked for a part 2') {
+        throw new Error('Later imports must update provided fields without erasing earlier ones');
+      }
+
+      const brief = await loadPerformanceBrief({ root, outputRoot });
+      for (const expected of ['Top 10 Deadliest Animals Ranked', 'Lowest CTR', 'Comments asked for a part 2', 'Already produced']) {
+        if (!brief.includes(expected)) throw new Error(`Performance brief is missing: ${expected}`);
+      }
+      if (!(await fs.readFile(path.join(root, 'insights.md'), 'utf8')).includes('| Top 5 Fastest Cars |')) {
+        throw new Error('insights.md must list every imported video');
+      }
+      if (await loadPerformanceBrief({ root: path.join(root, 'empty'), outputRoot: path.join(root, 'none') }) !== null) {
+        throw new Error('No analytics and no packages must produce no brief');
+      }
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
   }
 
   async testDirectories() {
