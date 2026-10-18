@@ -61,6 +61,17 @@ function fetchYouTube({ url, out, cookies }) {
   return out;
 }
 
+function fetchDrive({ id, out }) {
+  if (!id) throw new Error('fetch-drive needs --id FILE_ID (list a shared folder with: gdown --folder URL)');
+  try {
+    run('gdown', [id, '-O', out]);
+  } catch (error) {
+    throw new Error('gdown failed. Install it with "pip install gdown" and check the file is shared publicly.');
+  }
+  fs.writeFileSync(`${out}.source.json`, JSON.stringify({ platform: 'drive', url: `https://drive.google.com/file/d/${id}/view`, offsetSeconds: 0 }, null, 2));
+  return out;
+}
+
 function transcribe({ source, out, model = 'small.en' }) {
   run('python3', [path.join(HERE, 'transcribe.py'), source, out, '--model', model]);
   return out;
@@ -70,25 +81,43 @@ function transcriptLines(transcript) {
   return transcript.segments.map(s => `[${s.start.toFixed(1)}-${s.end.toFixed(1)}] ${s.text}`).join('\n');
 }
 
-function snapToSegments(transcript, start, end) {
+function loadPreset(name) {
+  if (!name) return {};
+  const presets = JSON.parse(fs.readFileSync(path.join(HERE, 'presets.json'), 'utf8'));
+  const preset = presets[String(name).toLowerCase()];
+  if (!preset) throw new Error(`Unknown preset "${name}". Available: ${Object.keys(presets).join(', ')}`);
+  return preset;
+}
+
+// Whisper segments can run 10s+, so short clips fall back to word boundaries when segment snapping overshoots.
+function snapToSegments(transcript, start, end, maxSeconds = Infinity) {
   const segments = transcript.segments;
   const first = segments.reduce((best, s) => Math.abs(s.start - start) < Math.abs(best.start - start) ? s : best, segments[0]);
   const last = segments.reduce((best, s) => Math.abs(s.end - end) < Math.abs(best.end - end) ? s : best, segments[0]);
-  return { start: Math.max(0, first.start - 0.15), end: last.end + 0.35 };
+  const snapped = { start: Math.max(0, first.start - 0.15), end: last.end + 0.35 };
+  if (snapped.end - snapped.start <= maxSeconds + 2) return snapped;
+  const words = segments.flatMap(s => s.words || []);
+  if (!words.length) return { start: Math.max(0, start), end };
+  const firstWord = words.reduce((best, w) => Math.abs(w.start - start) < Math.abs(best.start - start) ? w : best, words[0]);
+  const lastWord = words.reduce((best, w) => Math.abs(w.end - end) < Math.abs(best.end - end) ? w : best, words[0]);
+  return { start: Math.max(0, firstWord.start - 0.15), end: lastWord.end + 0.35 };
 }
 
-async function selectWithGemini(transcript, { count, creator, minSeconds, maxSeconds }) {
+async function selectWithGemini(transcript, { count, creator, minSeconds, maxSeconds, preset }) {
   const { GoogleGenAI } = require('@google/genai');
   const client = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const model = process.env.CLIPS_TEXT_MODEL || 'gemini-3.8-flash';
+  const hashtags = (preset.hashtags || [`#${creator.toLowerCase()}`, '#shorts']).join(' ');
+  const guidance = (preset.guidance || ['Prefer: big wins or losses, strong opinions, funny reactions, a clear trading lesson or mindset quote, money/lifestyle flexes.'])
+    .map(line => `- ${line}`).join('\n');
   const prompt = `You are an expert short-form video editor for a ${creator} clips channel on YouTube Shorts.
-From this timestamped livestream transcript, pick the ${count} strongest standalone moments for Shorts.
+From this timestamped transcript (a livestream, podcast or video), pick the ${count} strongest standalone moments for Shorts.
 Rules:
 - Each clip is ${minSeconds}-${maxSeconds} seconds, starts at the beginning of a sentence with an instant hook (no setup, no "so", no greetings), and ends on a punchline, reveal or complete thought.
-- Prefer: big wins or losses, strong opinions, funny reactions, a clear trading lesson or mindset quote, money/lifestyle flexes.
+${guidance}
 - Avoid: segments that depend on unseen context, sponsor reads, chat housekeeping, anything that portrays ${creator} negatively.
 - Clips must not overlap.
-Return JSON: {"clips": [{"start": number, "end": number, "hook": string (on-screen hook, max 32 chars, punchy, sentence case, may end with one emoji), "title": string (YouTube Shorts title, max 70 chars, include #${creator.toLowerCase()} #shorts), "description": string (1-2 sentences), "why": string (one sentence), "score": number 1-10}]}
+Return JSON: {"clips": [{"start": number, "end": number, "hook": string (on-screen hook, max 32 chars, punchy, sentence case, may end with one emoji), "title": string (YouTube Shorts title, max 70 chars, include ${hashtags}), "description": string (1-2 sentences), "mentionsTrading": boolean (true if the clip discusses trades, strategies, markets or money results), "why": string (one sentence), "score": number 1-10}]}
 Transcript:
 ${transcriptLines(transcript)}`;
   const response = await client.models.generateContent({ model, contents: prompt, config: { responseMimeType: 'application/json', temperature: 0.4 } });
@@ -119,9 +148,12 @@ function selectHeuristic(transcript, { count, minSeconds, maxSeconds }) {
   return picked;
 }
 
-async function select({ transcriptPath, out, count = 2, creator = 'TJR', minSeconds = 30, maxSeconds = 60 }) {
+async function select({ transcriptPath, out, count = 2, creator, minSeconds, maxSeconds, preset = {} }) {
   const transcript = JSON.parse(fs.readFileSync(transcriptPath, 'utf8'));
-  const options = { count: Number(count), creator, minSeconds: Number(minSeconds), maxSeconds: Number(maxSeconds) };
+  const options = {
+    count: Number(count), creator: creator || preset.creator || 'TJR', preset,
+    minSeconds: Number(minSeconds ?? preset.minSeconds ?? 30), maxSeconds: Number(maxSeconds ?? preset.maxSeconds ?? 60)
+  };
   let clips;
   let method = 'gemini';
   try {
@@ -132,8 +164,9 @@ async function select({ transcriptPath, out, count = 2, creator = 'TJR', minSeco
     clips = selectHeuristic(transcript, options);
     method = 'heuristic';
   }
-  clips = clips.map(clip => ({ ...clip, ...snapToSegments(transcript, clip.start, clip.end), method }))
-    .filter(clip => clip.end - clip.start >= options.minSeconds - 3 && clip.end - clip.start <= options.maxSeconds + 5);
+  const slack = Math.max(2, options.maxSeconds * 0.1);
+  clips = clips.map(clip => ({ ...clip, ...snapToSegments(transcript, clip.start, clip.end, options.maxSeconds), method }))
+    .filter(clip => clip.end - clip.start >= options.minSeconds - slack && clip.end - clip.start <= options.maxSeconds + slack);
   fs.writeFileSync(out, JSON.stringify(clips, null, 2));
   for (const clip of clips) console.log(`${clip.start.toFixed(1)}-${clip.end.toFixed(1)} (${(clip.end - clip.start).toFixed(0)}s) ${clip.hook} | ${clip.why}`);
   return clips;
@@ -165,7 +198,7 @@ const maskProfanity = text => process.env.CLIPS_KEEP_PROFANITY ? text
     .replace(/\b(s)(hi)(t\w*)/gi, (m, a) => a + '**' + m.slice(-1))
     .replace(/\b(b)(itch\w*)/gi, (m, a) => a + '****' + m.slice(-1));
 
-function buildAss({ words, hook, hookY, captionY, duration }) {
+function buildAss({ words, hook, hookY, captionY, duration, disclaimer, disclaimerY }) {
   const header = `[Script Info]
 ScriptType: v4.00+
 PlayResX: ${W}
@@ -176,11 +209,13 @@ WrapStyle: 2
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Hook,Montserrat ExtraBold,74,&H00111111,&H00111111,&H00FFFFFF,&H00FFFFFF,0,0,0,0,100,100,0,0,3,18,0,5,60,60,0,1
 Style: Cap,Montserrat ExtraBold,84,&H00FFFFFF,&H0000E5FF,&H00000000,&H64000000,0,0,0,0,100,100,0,0,1,7,3,5,40,40,0,1
+Style: Note,Montserrat ExtraBold,40,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,0,0,0,0,100,100,2,0,3,10,0,5,40,40,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 `;
   const events = [`Dialogue: 1,${assTime(0)},${assTime(duration)},Hook,,0,0,0,,{\\pos(${W / 2},${hookY})}${assEscape(stripEmoji(hook))}`];
+  if (disclaimer) events.push(`Dialogue: 1,${assTime(0)},${assTime(duration)},Note,,0,0,0,,{\\pos(${W / 2},${disclaimerY})}${assEscape(disclaimer)}`);
   // Two or three words per caption, with the spoken word highlighted in yellow.
   const groups = [];
   let current = [];
@@ -231,18 +266,55 @@ function layoutFilter(info) {
     const faceX = even(clamp(face.x + face.w / 2 - faceCropW / 2, 0, sw - faceCropW));
     const faceY = even(clamp(face.y + face.h * 0.55 - faceCropH / 2, 0, sh - faceCropH));
     return {
-      mode: 'split', hookY: chartPanelH, captionY: chartPanelH + 175,
+      mode: 'split', hookY: chartPanelH, captionY: chartPanelH + 175, disclaimerY: 120,
       filter: `[0:v]split[a][b];[a]crop=${chartCropW}:${chartH}:${chartX}:0,scale=${W}:${chartPanelH}:flags=lanczos[top];` +
         `[b]crop=${faceCropW}:${faceCropH}:${faceX}:${faceY},scale=${W}:${facePanelH}:flags=lanczos[bottom];[top][bottom]vstack`
     };
   }
-  const cropW = even(sh * W / H);
+  // A wide talking-head shot (small face) gets a tighter vertical crop. Chart webcams stay full-height.
+  let cropH = sh;
+  let cropY = 0;
+  if (face && face.h / sh < 0.18) {
+    cropH = even(clamp(face.h / 0.24, sh * 0.5, sh));
+    cropY = even(clamp(face.y + face.h * 0.4 - cropH * 0.28, 0, sh - cropH));
+  }
+  let cropW = even(cropH * W / H);
+  if (cropW > sw) {
+    cropW = even(sw);
+    cropH = even(cropW * H / W);
+    cropY = even(clamp((face ? face.y + face.h * 0.4 : sh / 2) - cropH * 0.28, 0, sh - cropH));
+  }
   const centerX = face ? face.x + face.w / 2 : sw / 2;
-  const x = even(clamp(centerX - cropW / 2, 0, sw - cropW));
-  return { mode: 'center', hookY: 380, captionY: 1380, filter: `[0:v]crop=${cropW}:${sh}:${x}:0,scale=${W}:${H}:flags=lanczos` };
+  const cropX = even(clamp(centerX - cropW / 2, 0, sw - cropW));
+  const scale = H / cropH;
+  const captionY = 1320;
+  const disclaimerY = 1480;
+  // Keep the hook off the face: above the hairline when there is room under the Shorts top bar, else under the chin.
+  let hookY = 380;
+  if (face) {
+    const faceY = (face.y - cropY) * scale;
+    const faceH = face.h * scale;
+    const hairTop = faceY - faceH * 0.35;
+    const chin = faceY + faceH;
+    hookY = hairTop - 70 >= 250 ? Math.min(380, hairTop - 70) : Math.min(chin + 120, captionY - 220);
+  }
+  return {
+    mode: cropH < sh ? 'center-tight' : 'center', hookY: Math.round(hookY), captionY, disclaimerY,
+    filter: `[0:v]crop=${cropW}:${cropH}:${cropX}:${cropY},scale=${W}:${H}:flags=lanczos`
+  };
 }
 
-function render({ source, transcriptPath, clipsPath, outDir, only }) {
+function metadataMarkdown(clip, preset, n) {
+  const hashtags = preset.hashtags || [];
+  let title = stripEmoji(clip.title || clip.hook);
+  for (const tag of hashtags) if (!title.toLowerCase().includes(tag.toLowerCase())) title += ` ${tag}`;
+  const description = [clip.description, preset.mention ? `Credit: ${preset.mention}` : '', hashtags.join(' '), preset.descriptionFooter || '']
+    .filter(Boolean).join('\n\n');
+  return `# Clip ${n}\n\n**Title:** ${title}\n\n**Description:**\n\n${description}\n\n**Hashtags:** ${hashtags.join(' ')}\n\n` +
+    `**On-screen hook:** ${clip.hook}\n\n**Duration:** ${(clip.end - clip.start).toFixed(1)}s (source ${clip.start.toFixed(1)}-${clip.end.toFixed(1)}s)\n`;
+}
+
+function render({ source, transcriptPath, clipsPath, outDir, only, preset = {} }) {
   const transcript = JSON.parse(fs.readFileSync(transcriptPath, 'utf8'));
   const clips = JSON.parse(fs.readFileSync(clipsPath, 'utf8'));
   const fontsDir = ensureFont();
@@ -257,13 +329,15 @@ function render({ source, transcriptPath, clipsPath, outDir, only }) {
     const info = detectFace(source, clip.start, clip.end);
     const layout = layoutFilter(info);
     const assPath = path.join(outDir, `clip-${i + 1}.ass`);
-    fs.writeFileSync(assPath, buildAss({ words, hook: clip.hook, hookY: layout.hookY, captionY: layout.captionY, duration }));
+    const disclaimer = preset.disclaimer && (clip.disclaimer ?? clip.mentionsTrading ?? true) ? preset.disclaimer : null;
+    fs.writeFileSync(assPath, buildAss({ words, hook: clip.hook, hookY: layout.hookY, captionY: layout.captionY, duration, disclaimer, disclaimerY: layout.disclaimerY }));
+    fs.writeFileSync(path.join(outDir, `clip-${i + 1}-metadata.md`), metadataMarkdown(clip, preset, i + 1));
     const out = path.join(outDir, `clip-${i + 1}.mp4`);
     run('ffmpeg', ['-loglevel', 'error', '-y', '-ss', clip.start.toFixed(2), '-t', duration.toFixed(2), '-i', source,
       '-filter_complex', `${layout.filter},fps=30,subtitles=${assPath}:fontsdir=${fontsDir},format=yuv420p[v]`,
       '-map', '[v]', '-map', '0:a:0', '-af', 'loudnorm=I=-14:TP=-1.5:LRA=11', '-ar', '48000',
       '-c:v', 'libx264', '-preset', 'medium', '-crf', '20', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', out]);
-    console.log(`rendered ${out} (${layout.mode}, ${duration.toFixed(1)}s)`);
+    console.log(`rendered ${out} (${layout.mode}, hook ${layout.hookY}, ${duration.toFixed(1)}s)`);
     outputs.push({ ...clip, file: out, layout: layout.mode, duration });
   });
   fs.writeFileSync(path.join(outDir, 'rendered.json'), JSON.stringify(outputs, null, 2));
@@ -282,16 +356,18 @@ async function main() {
 
   if (command === 'fetch-kick') await fetchKick({ channel: args.channel || 'tjr', index: args.index, uuid: args.uuid, start: args.start, duration: args.duration, out: source });
   else if (command === 'fetch-youtube') fetchYouTube({ url: args.url, out: source, cookies: args.cookies });
+  else if (command === 'fetch-drive') fetchDrive({ id: args.id, out: source });
   else if (command === 'transcribe') transcribe({ source, out: transcriptPath, model: args.model });
-  else if (command === 'select') await select({ transcriptPath, out: clipsPath, count: args.count, creator: args.creator, minSeconds: args.min, maxSeconds: args.max });
-  else if (command === 'render') render({ source, transcriptPath, clipsPath, outDir, only: args.only });
+  else if (command === 'select') await select({ transcriptPath, out: clipsPath, count: args.count, creator: args.creator, minSeconds: args.min, maxSeconds: args.max, preset: loadPreset(args.preset) });
+  else if (command === 'render') render({ source, transcriptPath, clipsPath, outDir, only: args.only, preset: loadPreset(args.preset) });
   else {
     console.log(`Usage: node scripts/clips/clip-pipeline.js <command> [--work DIR]
   fetch-kick     --channel tjr [--index 0 | --uuid UUID] --start SECONDS --duration SECONDS
   fetch-youtube  --url URL [--cookies cookies.txt]
+  fetch-drive    --id GOOGLE_DRIVE_FILE_ID
   transcribe     [--model small.en]
-  select         [--count 2] [--creator TJR] [--min 30] [--max 60]
-  render         [--only N]`);
+  select         [--preset pbinvesting] [--count 2] [--creator TJR] [--min 30] [--max 60]
+  render         [--preset pbinvesting] [--only N]`);
     process.exitCode = command ? 1 : 0;
   }
 }
