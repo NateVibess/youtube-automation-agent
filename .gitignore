@@ -90,3 +90,12 @@ data/thumbnails/
 
 # Claude worktrees
 .claude/worktrees/
+
+# Ready-to-post packages and creator analytics (private, local only)
+output/
+analytics/inbox/*
+!analytics/inbox/.gitkeep
+analytics/imported/
+analytics/performance.json
+analytics/performance-brief.json
+analytics/insights.md

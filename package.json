@@ -5,6 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "video": "node scripts/make-video.js",
+    "analytics:import": "node scripts/import-analytics.js",
     "setup": "node setup.js",
     "walkthrough": "node walkthrough.js",
     "growth:snapshot": "node scripts/growth/snapshot-github.js",
