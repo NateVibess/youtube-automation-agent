@@ -217,6 +217,24 @@ const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
 // Split layout when the face sits in a corner webcam (chart on top, face below); otherwise one tall crop on the face.
 function layoutFilter(info) {
   const { width: sw, height: sh, face } = info;
+  // Gaming streams: CLIPS_CAM="x,y,w,h" (webcam box in source pixels) puts the facecam on top and gameplay below.
+  if (process.env.CLIPS_CAM) {
+    const [cx, cy, cw, ch] = process.env.CLIPS_CAM.split(',').map(Number);
+    const camPanelH = 600;
+    const gamePanelH = H - camPanelH;
+    const camCropW = even(Math.min(cw, ch * W / camPanelH));
+    const camCropH = even(camCropW * camPanelH / W);
+    const camX = even(cx + (cw - camCropW) / 2);
+    const camY = even(cy + (ch - camCropH) / 2);
+    const gameCropW = even(sh * W / gamePanelH);
+    const gameCenter = Number(process.env.CLIPS_GAME_CX) || sw / 2;
+    const gameX = even(clamp(gameCenter - gameCropW / 2, 0, sw - gameCropW));
+    return {
+      mode: 'facecam', hookY: camPanelH, captionY: camPanelH + 560,
+      filter: `[0:v]split[a][b];[a]crop=${camCropW}:${camCropH}:${camX}:${camY},scale=${W}:${camPanelH}:flags=lanczos[top];` +
+        `[b]crop=${gameCropW}:${sh}:${gameX}:0,scale=${W}:${gamePanelH}:flags=lanczos[bottom];[top][bottom]vstack`
+    };
+  }
   if (face && face.y > sh * 0.45 && face.x + face.w / 2 < sw * 0.5) {
     // Keep the chart crop above the webcam and left of TradingView's watchlist (about 74.5% of the width).
     const chartRight = sw * (Number(process.env.CLIPS_CHART_RIGHT) || 0.745);

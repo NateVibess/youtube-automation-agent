@@ -29,4 +29,5 @@ You can edit `$W/clips.json` before rendering to change the timings or the on-sc
 
 - **Corner webcam detected:** a split screen. The chart crop goes on top, above the webcam and left of the TradingView watchlist. Set `CLIPS_CHART_RIGHT=0.745` to change that edge. The face goes on the bottom, with a hook box on the seam and word-by-word captions above the face.
 - **Otherwise:** a single 9:16 crop centred on the face.
+- **Gaming streams:** set `CLIPS_CAM=x,y,w,h` (the webcam box in source pixels, read off a frame) for a facecam-on-top, gameplay-below layout. Use `CLIPS_GAME_CX` to move the centre of the gameplay crop. Example for Clix's top-left cam on a 1080p VOD: `CLIPS_CAM=14,294,482,246`.
 - **Captions:** profanity is masked in captions only, and the audio is untouched. Set `CLIPS_KEEP_PROFANITY=1` to disable masking.
