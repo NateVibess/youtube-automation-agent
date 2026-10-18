@@ -235,7 +235,12 @@ function buildPerformanceBrief(records, packages = []) {
   const byViews = videos.filter(record => Number.isFinite(record.views)).sort((a, b) => b.views - a.views);
   const byCtr = [...ctrEligible].sort((a, b) => b.ctr - a.ctr);
   const byRetention = [...retentionEligible].sort((a, b) => b.avgPercentViewed - a.avgPercentViewed);
-  const pick = (list, count, fromEnd = false) => (list.length < 2 ? [] : (fromEnd ? list.slice(-count).reverse() : list.slice(0, count)));
+  // At most half the sample per side, so "best" and "worst" never share a video.
+  const pick = (list, count, fromEnd = false) => {
+    const size = Math.min(count, Math.floor(list.length / 2));
+    if (!size) return [];
+    return fromEnd ? list.slice(-size).reverse() : list.slice(0, size);
+  };
 
   const titlePatterns = TITLE_FEATURES
     .flatMap(feature => [compareFeature(videos, feature, 'ctr'), compareFeature(videos, feature, 'avgPercentViewed')])

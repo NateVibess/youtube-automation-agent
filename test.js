@@ -3230,7 +3230,7 @@ class SystemTest {
           seo: { title: 'Top 10 Deadliest Animals Ranked', description: 'A countdown.', tags: ['animals', 'ranked'], thumbnailTextOptions: ['NOT SHARKS'] },
           thumbnail: { path: thumbPath },
           assets: { finalVideo: { path: videoPath }, thumbnail: { path: path.join(tmp, 'failed.info') } }
-        }, { outputRoot: tmp, qualityChecks: [{ id: 'video', passed: true, blocking: true }] });
+        }, { outputRoot: tmp, qualityChecks: [{ id: 'video', passed: true, blocking: true }, { id: 'provenance', passed: false, blocking: true }] });
         const files = await fs.readdir(pkg.dir);
         for (const expected of ['video.mp4', 'thumbnail.png', 'title.txt', 'description.txt', 'tags.txt', 'metadata.json', 'CHECKLIST.md']) {
           if (!files.includes(expected)) throw new Error(`Post package is missing ${expected}`);
@@ -3240,7 +3240,16 @@ class SystemTest {
         }
         const checklist = await fs.readFile(path.join(pkg.dir, 'CHECKLIST.md'), 'utf8');
         if (!pkg.readyToPost || !checklist.includes('Mosquitoes kill the most people') || !checklist.includes('NOT SHARKS')) {
-          throw new Error('CHECKLIST.md must list claims to verify and thumbnail text ideas');
+          throw new Error('CHECKLIST.md must list claims to verify and thumbnail text ideas; unverified claims alone must not block');
+        }
+
+        const templated = await exportPostPackage({
+          id: 'prod_tpl777', script: { title: 'Templated' },
+          seo: { description: 'Subscribe: [Your Channel URL] and watch [Related Video 1]' },
+          assets: { finalVideo: { path: videoPath } }
+        }, { outputRoot: tmp });
+        if (!(await fs.readFile(path.join(templated.dir, 'CHECKLIST.md'), 'utf8')).includes('[Your Channel URL]')) {
+          throw new Error('Template placeholders in the description must be flagged');
         }
 
         const simulated = await exportPostPackage({

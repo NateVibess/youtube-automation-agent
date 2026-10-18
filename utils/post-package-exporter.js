@@ -24,6 +24,8 @@ function normalizeTitle(value) {
 }
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp']);
+// Covered by the "Facts to double-check" list instead of the dashboard evidence desk.
+const MANUAL_REVIEW_CHECKS = new Set(['provenance']);
 
 function fileExists(filePath) {
   return Boolean(filePath) && fsSync.existsSync(filePath) && fsSync.statSync(filePath).isFile();
@@ -46,7 +48,9 @@ function buildChecklist(pkg) {
     `# ${pkg.title}`,
     '',
     `Package ID: \`${pkg.packageId}\``,
-    `Status: **${pkg.readyToPost ? 'Ready to post after your review' : 'NOT ready: fix the blocking issues below first'}**`,
+    `Status: **${pkg.readyToPost
+      ? (pkg.claimsToVerify.length ? 'Ready to post once you check the facts below' : 'Ready to post after your review')
+      : 'NOT ready: fix the blocking issues below first'}**`,
     '',
     '## Files',
     `- Video: ${pkg.files.video || 'missing (no real MP4 was produced; see blocking issues)'}`,
@@ -62,8 +66,11 @@ function buildChecklist(pkg) {
     lines.push('## Thumbnail text ideas', ...pkg.thumbnailTextOptions.map(text => `- ${text}`), '');
   }
 
-  const blocking = pkg.qualityChecks.filter(check => check.blocking && !check.passed);
+  const blocking = pkg.qualityChecks.filter(check => check.blocking && !check.passed && !MANUAL_REVIEW_CHECKS.has(check.id));
   const warnings = pkg.qualityChecks.filter(check => !check.blocking && !check.passed);
+  if (pkg.placeholders.length) {
+    warnings.push({ id: 'placeholders', message: `Description still has template placeholders (${pkg.placeholders.join(', ')}); replace or delete them` });
+  }
   if (blocking.length) {
     lines.push('## Blocking issues', ...blocking.map(check => `- ${check.label || check.id}: ${check.message || ''}`.trim()), '');
   }
@@ -135,7 +142,8 @@ async function exportPostPackage(production, options = {}) {
     .filter(claim => claim && claim.text && !['supported', 'waived'].includes(claim.status))
     .map(claim => ({ text: claim.text, riskLevel: claim.riskLevel || claim.risk_level || 'standard' }));
 
-  const blockingFailed = qualityChecks.some(check => check.blocking && !check.passed);
+  const blockingFailed = qualityChecks.some(check => check.blocking && !check.passed && !MANUAL_REVIEW_CHECKS.has(check.id));
+  const placeholders = [...new Set(description.match(/\[(?:Your|Related Video)[^\]]*\]/g) || [])];
   const pkg = {
     packageId,
     title,
@@ -153,6 +161,7 @@ async function exportPostPackage(production, options = {}) {
       id: check.id, label: check.label, passed: Boolean(check.passed), blocking: Boolean(check.blocking), message: check.message || null
     })),
     claimsToVerify,
+    placeholders,
     containsSyntheticMedia: production.provenance?.containsSyntheticMedia === true,
     performanceBriefUsed: Boolean(strategy.performanceBrief),
     files,

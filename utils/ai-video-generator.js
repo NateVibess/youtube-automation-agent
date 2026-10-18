@@ -889,11 +889,14 @@ class AIVideoGenerator {
       ).join('');
     }
     
-    if (typeof section.content === 'string') {
-      return `<p>${section.content.slice(0, 200)}${section.content.length > 200 ? '...' : ''}</p>`;
+    const content = Array.isArray(section.content)
+      ? String(section.content.find(line => String(line || '').trim()) || '')
+      : section.content;
+    if (typeof content === 'string' && content.trim()) {
+      return `<p>${content.slice(0, 200)}${content.length > 200 ? '...' : ''}</p>`;
     }
-    
-    return '<p>Content coming soon...</p>';
+
+    return '';
   }
 
   calculateScriptDuration(script) {
