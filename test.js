@@ -3368,7 +3368,7 @@ class SystemTest {
 
     if (revealOrder(6).join(',') !== '3,4,5,6,2,1') throw new Error('Six clips reveal 3..6 then 2 then 1');
     const total = [1, 2, 3, 4, 5, 6].reduce((sum, rank) => sum + segmentDuration(rank, 6), 0);
-    if (total !== 20) throw new Error(`Six-clip timing must match the 20s example, got ${total}`);
+    if (total !== 30) throw new Error(`Six-clip timing should be the slower 30s cut, got ${total}`);
 
     const window = planSegmentWindow({ mediaDuration: 10, segmentDuration: 4, payoffSeconds: 8 });
     if (Math.abs(window.start - 5.4) > 0.05 || Math.abs(window.duration - 4) > 0.05) {
@@ -3433,8 +3433,8 @@ class SystemTest {
     const makeClip = async (name, size, color) => {
       const file = path.join(dir, name);
       await runFFmpeg([
-        '-y', '-f', 'lavfi', '-i', `color=c=${color}:s=${size}:d=6:r=30`,
-        '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=6',
+        '-y', '-f', 'lavfi', '-i', `color=c=${color}:s=${size}:d=8:r=30`,
+        '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=8',
         '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', file
       ]);
       return file;
@@ -3444,12 +3444,12 @@ class SystemTest {
     const [wideWidth, wideHeight] = [640, 360];
     const rendered = await renderRankingShort([
       {
-        id: 'wide', filePath: wideFile, width: wideWidth, height: wideHeight, hasAudio: true, mediaDuration: 6,
+        id: 'wide', filePath: wideFile, width: wideWidth, height: wideHeight, hasAudio: true, mediaDuration: 8,
         title: 'Stepping onto a frozen pool', score: 20, author: 'bob', subreddit: 'Whatcouldgowrong',
         permalink: 'https://www.reddit.com/r/Whatcouldgowrong/comments/wide/slug/', label: 'Frozen pool', emoji: '🥶', rank: 2
       },
       {
-        id: 'tall', filePath: tallFile, width: 360, height: 640, hasAudio: true, mediaDuration: 6,
+        id: 'tall', filePath: tallFile, width: 360, height: 640, hasAudio: true, mediaDuration: 8,
         title: 'Pool drain', score: 50, author: 'carol', subreddit: 'Whatcouldgowrong',
         permalink: 'https://www.reddit.com/r/Whatcouldgowrong/comments/tall/slug/', label: 'Pool drain', emoji: '💦', rank: 1
       }
@@ -3466,7 +3466,7 @@ class SystemTest {
     const videoStat = await fs.promises.stat(rendered.videoPath);
     if (videoStat.size < 10000) throw new Error('Ranking Short MP4 is empty');
     const duration = await getMediaDuration(rendered.videoPath);
-    if (duration < 8 || duration > 10) throw new Error(`Two-clip short should be about 9s, got ${duration}`);
+    if (duration < 12 || duration > 13.5) throw new Error(`Two-clip short should be about 12.5s, got ${duration}`);
     for (const name of ['title.txt', 'description.txt', 'tags.txt', 'CHECKLIST.md', 'thumbnail.jpg']) {
       if (!fs.existsSync(path.join(rendered.packageDir, name))) throw new Error(`Package is missing ${name}`);
     }

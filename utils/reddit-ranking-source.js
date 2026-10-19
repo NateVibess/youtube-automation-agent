@@ -7,10 +7,53 @@ const GENERIC_THEME_WORDS = new Set([
 ]);
 
 // Titles that are a poor fit for a light fail-compilation (graphic, sexual, or not a swimming-pool fail).
-const BLOCKED_TITLE = /\b(pee\w*|piss\w*|nude|naked|nudes|sex|porn|chemical|acid|peroxide|child|children|kiddie|kid|kids|baby|toddler|nephew|niece|blood|dead|death|died|drown\w*|hospital|seizure|shallow|broken|burn\w*|suicide|kill\w*|alligator|romance|fart\w*)\b|pool cue|pool table|carpool|billiard|rock pool|reflecting pool|mud pool|passing gas|pool shock/i;
+const BLOCKED_TITLE = /\b(pee\w*|piss\w*|nude|naked|nudes|sex|porn|lube|lubing|chemical|acid|peroxide|child|children|kiddie|kid|kids|baby|toddler|nephew|niece|blood|dead|death|died|drown\w*|hospital|seizure|shallow|broken|burn\w*|suicide|kill\w*|alligator|romance|fart\w*|steal\w*|theft|robbery|narcotic\w*|rifle|poop|preschool|rob|robbing|robbed)\b|pool cue|pool table|carpool|billiard|rock pool|reflecting pool|mud pool|passing gas|pool shock/i;
 
 const LABEL_RULES = [
   [/spider[\s-]?man/i, 'Spidey jump', '🕷️'],
+  [/england/i, 'England style', '💥'],
+  [/festival|mexican/i, 'Festival', '💥'],
+  [/each other/i, 'Crossfire', '💥'],
+  [/throwing fireworks|running off/i, 'Backwards', '💥'],
+  [/multiple/i, 'In a row', '💥'],
+  [/firework/i, 'Fireworks', '💥'],
+  [/ice skate/i, 'Ice skate', '🥶'],
+  [/roller skate/i, 'Roller skate', '😱'],
+  [/trike/i, 'Park trike', '😱'],
+  [/^dirt bik/i, 'Dirt bike', '🚲'],
+  [/skate park/i, 'Skate park', '😱'],
+  [/skate/i, 'Skate trick', '😱'],
+  [/ice fishing/i, 'Ice fishing', '🥶'],
+  [/drone/i, 'Drone cast', '🎣'],
+  [/surfing|\bpier\b/i, 'Pier surf', '🐟'],
+  [/without a pole|no pole/i, 'No pole', '🐟'],
+  [/fishing rod|\brod\b/i, 'Fishing rod', '🎣'],
+  [/fish/i, 'Fishing fail', '🐟'],
+  [/mud/i, 'Mud pit', '🚲'],
+  [/snow bridge|melting snow/i, 'Snow bridge', '❄️'],
+  [/(atv|quad).*bridge|bridge.*(atv|quad)/i, 'Bridge run', '😬'],
+  [/wheelie/i, 'ATV wheelie', '😬'],
+  [/downhill|rolling/i, 'Downhill', '😬'],
+  [/desert|slop/i, 'Desert slide', '😬'],
+  [/small space/i, 'Tight turn', '😬'],
+  [/goofing/i, 'Lot spin', '😬'],
+  [/quad|\batv\b/i, 'ATV fail', '😬'],
+  [/bike roll/i, 'Bike roll', '🚲'],
+  [/bike trick/i, 'Bike trick', '🚲'],
+  [/dirt bike/i, 'Dirt bike', '🚲'],
+  [/overtake|blind corner/i, 'Blind pass', '🚲'],
+  [/not looking|looking in front/i, 'No look', '🚲'],
+  [/bike.*\bice\b|\bice\b.*bike/i, 'Ice ride', '🚲'],
+  [/\bbike\b/i, 'Bike fail', '🚲'],
+  [/overtak.*snow|snow.*overtak/i, 'Hill pass', '❄️'],
+  [/doughnut|donut/i, 'Snow donuts', '❄️'],
+  [/headfirst|dive.*snow|snow.*dive/i, 'Snow dive', '❄️'],
+  [/drift.*snow|snow.*drift/i, 'Snow drift', '❄️'],
+  [/jump.*snow|snow.*jump/i, 'Snow jump', '❄️'],
+  [/snow/i, 'Snow fail', '❄️'],
+  [/horse/i, 'Horse fail', '😂'],
+  [/trampoline/i, 'Trampoline', '😱'],
+  [/wedding/i, 'Wedding fail', '😂'],
   [/frozen|\bice\b/i, 'Frozen pool', '🥶'],
   [/knife|rubber pool/i, 'Rubber pool', '🔪'],
   [/\brope\b/i, 'Rope jump', '😬'],
@@ -142,11 +185,12 @@ function assignRanks(clips) {
     const label = labelFromTitle(clip.title);
     let text = label.text;
     if (used.has(text)) {
+      const weak = new Set(['wcgw', 'wcgr', 'wgcw', 'lets', 'doing', 'trying', 'while', 'when', 'this', 'that', 'with', 'your', 'from', 'into', 'onto', 'just', 'really', 'very', 'good', 'idea', 'actual', 'static', 'what', 'could', 'wrong', 'there', 'then', 'them', 'they', 'have', 'been', 'will', 'same', 'time']);
       const extra = String(clip.title || '')
-        .replace(/wcgw/ig, ' ')
+        .replace(/wcgw|wcgr|wgcw/ig, ' ')
         .replace(/[^A-Za-z0-9\s]/g, ' ')
         .split(/\s+/)
-        .find(word => word.length > 3 && !text.toLowerCase().includes(word.toLowerCase()) && !GENERIC_THEME_WORDS.has(word.toLowerCase()));
+        .find(word => word.length > 3 && !text.toLowerCase().includes(word.toLowerCase()) && !GENERIC_THEME_WORDS.has(word.toLowerCase()) && !weak.has(word.toLowerCase()));
       if (extra) text = `${text.split(' ')[0]} ${extra.toLowerCase()}`;
     }
     used.add(text);
@@ -181,12 +225,13 @@ function revealOrder(count) {
   return order;
 }
 
-// Measured from the 20s reference Short: middle ranks 3s, the worst rank 2s, #2 is 5s, #1 is 4s.
+// Reference Short cuts every 2–3s (20s total). Holds are longer so each fail can land:
+// middle ranks 4.5s, the last rank 4s, #2 is 6.5s, #1 is 6s. Six clips run 30s.
 function segmentDuration(rank, count) {
-  if (rank === 1) return 4;
-  if (rank === 2) return 5;
-  if (rank === count) return 2;
-  return 3;
+  if (rank === 1) return 6;
+  if (rank === 2) return 6.5;
+  if (rank === count && count > 2) return 4;
+  return 4.5;
 }
 
 function rowCenters(count) {
@@ -259,7 +304,7 @@ async function searchPosts({ subreddit, query, limit = 100, sort = 'desc', fetch
   if (query) params.set('query', String(query));
   const url = `${ARCTIC_SHIFT_SEARCH}?${params}`;
   let lastError = null;
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
     const response = await fetchImpl(url, {
       headers: { 'User-Agent': 'ranks-channel/1.0', Accept: 'application/json' }
     });
@@ -271,7 +316,7 @@ async function searchPosts({ subreddit, query, limit = 100, sort = 'desc', fetch
     }
     lastError = new Error(`Arctic Shift search failed (${response.status}) for r/${subreddit}`);
     if (![422, 429, 500, 502, 503].includes(response.status)) throw lastError;
-    await new Promise(resolve => setTimeout(resolve, 400 * (attempt + 1)));
+    await new Promise(resolve => setTimeout(resolve, 1500 * (attempt + 1)));
   }
   throw lastError;
 }

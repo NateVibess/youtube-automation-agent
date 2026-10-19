@@ -38,7 +38,12 @@ const EMOJI_CODEPOINTS = {
   '😂': '1f602',
   '💀': '1f480',
   '😨': '1f628',
-  '☠️': '2620'
+  '☠️': '2620',
+  '🚲': '1f6b2',
+  '🎣': '1f3a3',
+  '🐟': '1f41f',
+  '💥': '1f4a5',
+  '❄️': '2744'
 };
 
 function fontPath(name) {
@@ -541,10 +546,13 @@ async function createRankingShort(options = {}) {
   const subreddit = options.subreddit || 'Whatcouldgowrong';
   const query = options.query || themeTokens(theme)[0] || theme;
   const logger = options.logger || console;
-  logger.info?.(`Searching r/${subreddit} for "${query}"`);
-  const posts = await searchPosts({
-    subreddit, query, limit: options.limit || 100, sort: 'desc', fetchImpl: options.fetchImpl
-  });
+  let posts = options.posts;
+  if (!posts) {
+    logger.info?.(`Searching r/${subreddit} for "${query}"`);
+    posts = await searchPosts({
+      subreddit, query, limit: options.limit || 100, sort: 'desc', fetchImpl: options.fetchImpl
+    });
+  }
   const excluded = new Set(
     (Array.isArray(options.excludeIds) ? options.excludeIds : String(options.excludeIds || '').split(','))
       .map(id => id.trim())

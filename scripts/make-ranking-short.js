@@ -8,7 +8,7 @@ const { createRankingShort } = require('../utils/ranking-short-compositor');
 const USAGE = `Usage: npm run ranking-short -- --theme "pool fails" [--count 6] [--subreddit Whatcouldgowrong]
 
   --theme      What to rank. Searches Reddit titles for the theme words (default: pool fails).
-  --count      How many clips, from 5 to 8 (default: 6, about 20 seconds, matching the example).
+  --count      How many clips, from 5 to 8 (default: 6, about 30 seconds).
   --subreddit  Subreddit to search (default: Whatcouldgowrong).
   --exclude    Comma-separated post ids to skip.
 
