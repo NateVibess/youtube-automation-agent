@@ -23,7 +23,8 @@ function getFFmpegPath() {
   }
 
   try {
-    cachedPath = require('ffmpeg-static');
+    const bundled = require('ffmpeg-static');
+    if (bundled && fs.existsSync(bundled)) cachedPath = bundled;
   } catch (error) {
     cachedPath = null;
   }

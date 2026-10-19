@@ -74,7 +74,8 @@ class SystemTest {
       { name: 'Growth Experiment Refresh Schedule', test: () => this.testGrowthExperimentRefreshSchedule() },
       { name: 'Manual Posting Mode', test: () => this.testManualPostingMode() },
       { name: 'Manual Analytics Feedback Loop', test: () => this.testManualAnalyticsLoop() },
-      { name: 'Gemini TTS Chunking', test: () => this.testGeminiTTSChunking() }
+      { name: 'Gemini TTS Chunking', test: () => this.testGeminiTTSChunking() },
+      { name: 'Ranking Short', test: () => this.testRankingShort() }
     ];
 
     let passed = 0;
@@ -3354,6 +3355,145 @@ class SystemTest {
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
+  }
+
+  async testRankingShort() {
+    const fs = require('fs');
+    const os = require('os');
+    const { runFFmpeg, getMediaDuration } = require('./utils/ffmpeg');
+    const {
+      buildPackageCopy, planSegmentWindow, revealOrder, segmentDuration, selectCandidateClips
+    } = require('./utils/reddit-ranking-source');
+    const { findPayoffSeconds, renderRankingShort } = require('./utils/ranking-short-compositor');
+
+    if (revealOrder(6).join(',') !== '3,4,5,6,2,1') throw new Error('Six clips reveal 3..6 then 2 then 1');
+    const total = [1, 2, 3, 4, 5, 6].reduce((sum, rank) => sum + segmentDuration(rank, 6), 0);
+    if (total !== 30) throw new Error(`Six-clip timing should be the slower 30s cut, got ${total}`);
+
+    const window = planSegmentWindow({ mediaDuration: 10, segmentDuration: 4, payoffSeconds: 8 });
+    if (Math.abs(window.start - 5.4) > 0.05 || Math.abs(window.duration - 4) > 0.05) {
+      throw new Error(`Payoff should sit at 65% of the segment, got ${JSON.stringify(window)}`);
+    }
+
+    const post = (id, title, score, extra = {}) => ({
+      id,
+      title,
+      score,
+      author: 'alice',
+      subreddit: 'Whatcouldgowrong',
+      permalink: `/r/Whatcouldgowrong/comments/${id}/slug/`,
+      over_18: false,
+      url: `https://v.redd.it/${id}`,
+      secure_media: {
+        reddit_video: {
+          hls_url: `https://v.redd.it/${id}/HLSPlaylist.m3u8?a=1`,
+          duration: extra.duration ?? 12,
+          width: extra.width ?? 720,
+          height: extra.height ?? 1280
+        }
+      },
+      ...extra.post
+    });
+    const posts = [
+      post('low', 'WCGW jumping into a pool', 10),
+      post('cue', 'Smashing a pool cue', 90000),
+      post('pee', 'WCGW peeing in a pool', 80000),
+      post('novid', 'A pool with no video', 70000, { post: { secure_media: null } }),
+      post('wide', 'Stepping onto a frozen pool', 5000, { width: 1280, height: 720 }),
+      post('top', 'WCGW jumping into a pool wearing spiderman suit', 40000),
+      post('second', 'That is one way to drain the pool', 3000)
+    ];
+    const selected = selectCandidateClips(posts, { theme: 'pool fails', count: 2, extras: 2 });
+    if (selected.map(clip => clip.id).join(',') !== 'top,second,low') {
+      throw new Error(`Vertical pool clips should outrank excluded and landscape posts, got ${selected.map(clip => clip.id).join(',')}`);
+    }
+    const copy = buildPackageCopy({
+      theme: 'pool fails',
+      clips: selected.slice(0, 2).map((clip, index) => ({ ...clip, rank: index + 1 }))
+    });
+    if (!copy.description.includes('u/alice') || !copy.description.includes('https://www.reddit.com/r/Whatcouldgowrong/comments/top/slug/')) {
+      throw new Error('Description must credit author and permalink');
+    }
+    if (!copy.description.includes('r/Whatcouldgowrong') || copy.title !== 'Ranking Best Pool Fails') {
+      throw new Error('Title and subreddit credit are wrong');
+    }
+
+    const dir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'yaa-rank-'));
+    const loud = path.join(dir, 'loud.wav');
+    await runFFmpeg([
+      '-y', '-f', 'lavfi', '-i', 'sine=frequency=1000:sample_rate=8000:duration=6',
+      '-af', "volume=0.02,volume=30:enable='between(t,4,5)'",
+      '-c:a', 'pcm_s16le', loud
+    ]);
+    const payoff = await findPayoffSeconds(loud);
+    if (payoff == null || payoff < 4.1 || payoff > 4.9) {
+      throw new Error(`Loudest second should be the burst at 4.5s, got ${payoff}`);
+    }
+
+    const makeClip = async (name, size, color) => {
+      const file = path.join(dir, name);
+      await runFFmpeg([
+        '-y', '-f', 'lavfi', '-i', `color=c=${color}:s=${size}:d=8:r=30`,
+        '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000:duration=8',
+        '-shortest', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', file
+      ]);
+      return file;
+    };
+    const wideFile = await makeClip('wide.mp4', '640x360', '0x0b1d24');
+    const tallFile = await makeClip('tall.mp4', '360x640', '0x102818');
+    const [wideWidth, wideHeight] = [640, 360];
+    const rendered = await renderRankingShort([
+      {
+        id: 'wide', filePath: wideFile, width: wideWidth, height: wideHeight, hasAudio: true, mediaDuration: 8,
+        title: 'Stepping onto a frozen pool', score: 20, author: 'bob', subreddit: 'Whatcouldgowrong',
+        permalink: 'https://www.reddit.com/r/Whatcouldgowrong/comments/wide/slug/', label: 'Frozen pool', emoji: '🥶', rank: 2
+      },
+      {
+        id: 'tall', filePath: tallFile, width: 360, height: 640, hasAudio: true, mediaDuration: 8,
+        title: 'Pool drain', score: 50, author: 'carol', subreddit: 'Whatcouldgowrong',
+        permalink: 'https://www.reddit.com/r/Whatcouldgowrong/comments/tall/slug/', label: 'Pool drain', emoji: '💦', rank: 1
+      }
+    ], {
+      theme: 'pool fails',
+      width: 360,
+      height: 640,
+      emoji: false,
+      outputRoot: dir,
+      packageId: 'ranktest01',
+      logger: { info() {} }
+    });
+
+    const videoStat = await fs.promises.stat(rendered.videoPath);
+    if (videoStat.size < 10000) throw new Error('Ranking Short MP4 is empty');
+    const duration = await getMediaDuration(rendered.videoPath);
+    if (duration < 12 || duration > 13.5) throw new Error(`Two-clip short should be about 12.5s, got ${duration}`);
+    for (const name of ['title.txt', 'description.txt', 'tags.txt', 'CHECKLIST.md', 'thumbnail.jpg']) {
+      if (!fs.existsSync(path.join(rendered.packageDir, name))) throw new Error(`Package is missing ${name}`);
+    }
+    const description = await fs.promises.readFile(path.join(rendered.packageDir, 'description.txt'), 'utf8');
+    if (!description.includes('u/carol') || !description.includes('https://www.reddit.com/r/Whatcouldgowrong/comments/tall/slug/')) {
+      throw new Error('Exported description dropped a source credit');
+    }
+    const frame = path.join(dir, 'frame.raw');
+    await runFFmpeg([
+      '-y', '-ss', '0.4', '-i', rendered.videoPath, '-frames:v', '1', '-f', 'rawvideo', '-pix_fmt', 'rgb24', frame
+    ]);
+    const raw = await fs.promises.readFile(frame);
+    let bright = 0;
+    let red = 0;
+    const frameWidth = 360;
+    for (let y = 50; y < 120; y += 1) {
+      for (let x = 20; x < 340; x += 4) {
+        const offset = (y * frameWidth + x) * 3;
+        const r = raw[offset];
+        const g = raw[offset + 1];
+        const b = raw[offset + 2];
+        if (r > 220 && g > 220 && b > 220) bright += 1;
+        if (r > 160 && g < 70 && b < 70) red += 1;
+      }
+    }
+    if (bright < 8 || red < 4) throw new Error(`Title overlay missing (bright ${bright}, red ${red})`);
+    await fs.promises.rm(dir, { recursive: true, force: true });
   }
 
   async testDirectories() {
