@@ -7,7 +7,7 @@ so a new shot starts about every 1.5s. Gameplay is fitted over a blurred copy of
 one word at a time, and the Roblox game page card plus a "CODE: ..." box appear during the CTA.
 Nothing is uploaded.
 """
-import argparse, asyncio, json, os, re, subprocess, sys, urllib.request, wave
+import argparse, asyncio, difflib, json, os, re, subprocess, sys, urllib.request, wave
 
 import numpy as np
 import edge_tts
@@ -84,13 +84,7 @@ def check_rules(cfg, preset, total):
         print(f"WARNING {cfg['name']}: {p}")
 
 
-def build(cfg, opts, preset, manifest):
-    files = {f['id']: f for f in manifest['files']}
-    name = cfg['name']
-    work = os.path.join(opts.work, name)
-    os.makedirs(work, exist_ok=True)
-    code = preset.get('code', 'CREATOR')
-
+def tts_voice(cfg, work, opts):
     voice = np.zeros(SR * 120, np.float32)
     t, words, spans, gap = 0.0, [], [], 0.07
     for i, sentence in enumerate(cfg['sentences']):
@@ -105,7 +99,84 @@ def build(cfg, opts, preset, manifest):
         gap = sentence.get('gap', 0.07)
         t += end - lead + gap
     total = round(t - gap + cfg.get('tail', 0.8), 2)
-    voice = voice[: int(total * SR)]
+    return voice[: int(total * SR)], words, spans, total
+
+
+def recorded_voice(path, cfg, preset, code, max_gap=0.22, keep=0.08):
+    """Use a human voiceover: Whisper gives word times, long pauses are cut down, and the sentence
+    starts (by end punctuation, or else the largest pauses) drive the cuts. Misheard spellings of the
+    game name and code are fixed in the captions only."""
+    from faster_whisper import WhisperModel
+    audio = decode(path)
+    raw16 = subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-f', 'f32le', '-ac', '1', '-ar', '16000', '-'], capture_output=True).stdout
+    a16 = np.frombuffer(raw16, np.float32)
+    model = WhisperModel(os.environ.get('MONTAGE_WHISPER', 'small.en'), compute_type='int8')
+    segments, _ = model.transcribe(a16, word_timestamps=True)
+    raw = []
+    for w in (w for s in segments for w in s.words):
+        if not raw or w.start >= raw[-1]['s'] + 0.01:
+            raw.append({'w': w.word.strip(), 's': w.start, 'e': w.end})
+
+    game = preset.get('creator', '').lower()
+    vocab = {}
+    for token in ' '.join(s['text'] for s in cfg['sentences']).split():
+        core = token.strip('.,!?')
+        vocab.setdefault(re.sub('[^a-z]', '', core.lower()), core)
+    for w in raw:
+        letters = re.sub('[^a-z]', '', w['w'].lower())
+        tail = re.sub(r'^.*?([.,!?]*)$', r'\1', w['w'])
+        close = difflib.get_close_matches(letters, vocab, n=1, cutoff=0.6)
+        if close and len(letters) > 3 and not letters.startswith(close[0]):
+            w['w'] = vocab[close[0]] + tail
+        if game and (difflib.SequenceMatcher(None, letters.rstrip('s'), game).ratio() >= 0.7 or letters.rstrip('s') in ('mindscape', 'minescape', 'minerscape')):
+            w['w'] = preset['creator'] + tail
+        elif letters == code.lower():
+            w['w'] = code + tail
+
+    pieces, words, out_t = [], [], 0.0
+    start = max(0.0, raw[0]['s'] - 0.06)
+    for i, w in enumerate(raw):
+        if i and w['s'] - raw[i - 1]['e'] > max_gap:
+            cut_from, cut_to = raw[i - 1]['e'] + keep, w['s'] - keep
+            pieces.append((start, cut_from)); out_t += cut_from - start; start = cut_to
+        words.append({'w': w['w'], 's': out_t + w['s'] - start, 'e': out_t + w['e'] - start})
+    pieces.append((start, len(audio) / SR))
+    voice = np.concatenate([audio[int(a * SR): int(b * SR)] for a, b in pieces])
+    loud = np.flatnonzero(np.abs(voice) > 0.02)
+    voice = voice[: (loud[-1] if len(loud) else len(voice)) + int(0.15 * SR)]
+
+    # Sentence starts by end punctuation, then reconcile with the script's sentence count: merge the
+    # shortest extra sentence into the one before it, or split the longest at its biggest pause.
+    n = len(cfg['sentences'])
+    starts = [0] + [i + 1 for i, w in enumerate(words[:-1]) if w['w'][-1:] in '.!?']
+    while len(starts) > n:
+        sizes = [(b - a, k) for k, (a, b) in enumerate(zip(starts, starts[1:] + [len(words)])) if k]
+        starts.pop(min(sizes)[1])
+    while len(starts) < n:
+        bounds = list(zip(starts, starts[1:] + [len(words)]))
+        a, b = max(bounds, key=lambda r: r[1] - r[0])
+        if b - a < 2:
+            break
+        starts = sorted(starts + [max(range(a + 1, b), key=lambda i: words[i]['s'] - words[i - 1]['e'])])
+    spans = [0.0] + [words[i]['s'] - 0.05 for i in starts[1:]]
+    total = round(len(voice) / SR + cfg.get('tail', 0.8) - 0.15, 2)
+    voice = np.concatenate([voice, np.zeros(int((total - len(voice) / SR) * SR) + 1, np.float32)])[: int(total * SR)]
+    print(f"{cfg['name']}: recording {len(audio) / SR:.1f}s -> {total}s after trimming pauses; heard: {' '.join(w['w'] for w in words)}")
+    return voice, words, spans, total
+
+
+def build(cfg, opts, preset, manifest):
+    files = {f['id']: f for f in manifest['files']}
+    name = cfg['name']
+    work = os.path.join(opts.work, name)
+    os.makedirs(work, exist_ok=True)
+    code = preset.get('code', 'CREATOR')
+
+    recording = (opts.voice_files or {}).get(name)
+    if recording:
+        voice, words, spans, total = recorded_voice(recording, cfg, preset, code)
+    else:
+        voice, words, spans, total = tts_voice(cfg, work, opts)
     voice *= 0.89 / max(1e-6, np.abs(voice).max())
     with wave.open(os.path.join(work, 'voice.wav'), 'wb') as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
@@ -203,7 +274,10 @@ def main():
     parser.add_argument('--out', default='/tmp/montage/out')
     parser.add_argument('--voice', default='en-US-AndrewNeural')
     parser.add_argument('--rate', default='+14%')
+    parser.add_argument('--voice-file', action='append', default=[], metavar='NAME=PATH',
+                        help='use a recorded voiceover for one Short instead of text-to-speech (needs faster-whisper)')
     opts = parser.parse_args()
+    opts.voice_files = dict(v.split('=', 1) for v in opts.voice_file)
     opts.card = opts.card or os.path.join(opts.library, 'roblox-card.png')
     os.makedirs(opts.out, exist_ok=True)
     ensure_fonts()

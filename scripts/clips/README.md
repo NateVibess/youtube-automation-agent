@@ -52,6 +52,11 @@ python3 scripts/clips/montage.py scripts/clips/minerscave-shorts.json --library 
 
 Run `fetch-bloxclips.js` without `--ids` to download the whole library, which is about 3 GB for Minerscave. Cloudflare blocks curl, so files are fetched inside a headed Chrome window. On a server, run it under a display such as Xvfb, and set `CHROME_PATH` if Chrome is not in the default location.
 
+To use your own voiceover for a Short instead of text-to-speech, add `--voice-file minerscave-1=recording.m4a`. This needs faster-whisper.
+- **Timing:** Whisper (`small.en`) times each word, and pauses longer than 0.22s are shortened. Each new sentence starts the next group of shots, and the sentence that matches the script's CTA brings in the end card.
+- **Captions:** they show what you actually said. Misheard words close to a script word take the script's spelling, so a misheard "mindscape" still shows as Minerscave.
+- **Rewording:** extra or missing sentences are reconciled with the script automatically.
+
 Each Short in `minerscave-shorts.json` lists its sentences, the clip ids and start offsets under each sentence, and the music and sound effects. The Minerscave library has no music or sound effects, so the example uses the ones from the BloxClips boxing campaign. `--preset minerscave` is the default and warns when a Short falls outside 15–30s or never says "Minerscave" or the code.
 
 ## Layout
