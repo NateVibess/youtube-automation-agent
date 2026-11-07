@@ -18,5 +18,19 @@
       "Never use P&L flexes, income claims or promised returns as the hook, and never portray PBInvesting negatively.",
       "Skip ads, course pitches, sponsor reads and anything about crypto, gambling or prop-firm promotions."
     ]
+  },
+  "minerscave": {
+    "creator": "Minerscave",
+    "minSeconds": 15,
+    "maxSeconds": 30,
+    "code": "CREATOR",
+    "gameUrl": "https://www.roblox.com/games/85709371593349/Minerscave",
+    "footage": "https://footage.bloxclips.com/minerscave-campaign",
+    "hashtags": ["#minerscave", "#roblox", "#shorts"],
+    "guidance": [
+      "Hook in the first 2 seconds, gameplay that backs up every line, then the CTA: Minerscave is free on Roblox, use code CREATOR, go play it.",
+      "Only Minerscave, only features that exist in the game, and CREATOR is the only valid code.",
+      "Post from a Roblox-focused account and join the BloxClips Discord to get paid."
+    ]
   }
 }

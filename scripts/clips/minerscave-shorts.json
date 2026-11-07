@@ -1,0 +1,480 @@
+[
+ {
+  "name": "minerscave-1",
+  "music": "Wii Party.mp3",
+  "highlight": [
+   "dragon",
+   "Minerscave",
+   "egg",
+   "lava",
+   "ride",
+   "fireballs",
+   "free",
+   "CREATOR"
+  ],
+  "cta_sentence": 6,
+  "sentences": [
+   {
+    "text": "Minecraft is now on Roblox, and you can raise your own dragon.",
+    "clips": [
+     {
+      "id": "73648165ef2b",
+      "at": 0.3
+     },
+     {
+      "id": "16e12caa3938",
+      "at": 2.5,
+      "flash": true
+     }
+    ]
+   },
+   {
+    "text": "This is Minerscave.",
+    "clips": [
+     {
+      "id": "91a071527bb3",
+      "at": 0.3,
+      "bw": true
+     }
+    ]
+   },
+   {
+    "text": "Find a dragon nest and steal the egg while the mother sleeps.",
+    "clips": [
+     {
+      "id": "aebd06c36408",
+      "at": 0.3
+     },
+     {
+      "id": "73648165ef2b",
+      "at": 6.0
+     }
+    ]
+   },
+   {
+    "text": "Heat it on lava, hatch it, and feed your baby dragon.",
+    "clips": [
+     {
+      "id": "48d5bbaeeafe",
+      "at": 3.0
+     },
+     {
+      "id": "16e12caa3938",
+      "at": 1.0
+     },
+     {
+      "id": "7da5a71de1ea",
+      "at": 0.5
+     }
+    ]
+   },
+   {
+    "text": "It grows up, and then you ride it.",
+    "clips": [
+     {
+      "id": "a720e430552c",
+      "at": 1.2
+     },
+     {
+      "id": "6540de93fcae",
+      "at": 1.0
+     }
+    ]
+   },
+   {
+    "text": "Fly through rings, hit targets with fireballs, and soar over the whole world.",
+    "clips": [
+     {
+      "id": "72e90b9c8b18",
+      "at": 9.0
+     },
+     {
+      "id": "37cf15f89cb0",
+      "at": 1.5
+     },
+     {
+      "id": "30cc7b10d1f1",
+      "at": 4.0
+     }
+    ]
+   },
+   {
+    "text": "Minerscave is free on Roblox right now.",
+    "clips": [
+     {
+      "id": "d9fe1ceedbef",
+      "at": 3.0
+     }
+    ]
+   },
+   {
+    "text": "Use code CREATOR for a free starter kit. Go play it.",
+    "clips": [
+     {
+      "id": "926ff7cd2b88",
+      "at": 2.0
+     }
+    ]
+   }
+  ],
+  "sfx": [
+   {
+    "f": "Intro sound (correct).mp3",
+    "t": 0,
+    "v": 0.5
+   },
+   {
+    "f": "Camera flash.mp3",
+    "shot": 1,
+    "t": 0,
+    "v": 0.5
+   },
+   {
+    "f": "Boom.mp3",
+    "shot": 2,
+    "t": 0,
+    "v": 0.55
+   },
+   {
+    "f": "Pop.mp3",
+    "shot": 10,
+    "t": 0,
+    "v": 0.6
+   },
+   {
+    "f": "Riser.mp3",
+    "t": "cta",
+    "before": 2.6,
+    "v": 0.35
+   },
+   {
+    "f": "Pop.mp3",
+    "t": "card",
+    "v": 0.7
+   }
+  ]
+ },
+ {
+  "name": "minerscave-2",
+  "music": "Elevator Music.mp3",
+  "music_vol": 0.2,
+  "highlight": [
+   "survival",
+   "Minerscave",
+   "trees",
+   "friends",
+   "saves",
+   "crystal",
+   "free",
+   "CREATOR"
+  ],
+  "cta_sentence": 6,
+  "sentences": [
+   {
+    "text": "Roblox finally has its own block survival game.",
+    "clips": [
+     {
+      "id": "bd12e005987f",
+      "at": 1.0
+     },
+     {
+      "id": "45a92ea7060f",
+      "at": 3.0,
+      "flash": true
+     }
+    ]
+   },
+   {
+    "text": "It's called Minerscave.",
+    "clips": [
+     {
+      "id": "9e6d69010bf3",
+      "at": 1.0,
+      "bw": true
+     }
+    ]
+   },
+   {
+    "text": "Chop trees, craft your tools,",
+    "clips": [
+     {
+      "id": "d62cbed41ef6",
+      "at": 10.0,
+      "lift": 1.4
+     },
+     {
+      "id": "23b83f65dcd0",
+      "at": 0.5
+     }
+    ]
+   },
+   {
+    "text": "and build your base with your friends.",
+    "clips": [
+     {
+      "id": "a80ac864d888",
+      "at": 3.0
+     },
+     {
+      "id": "a0e4f0633382",
+      "at": 9.0
+     },
+     {
+      "id": "3e0d345dd4f9",
+      "at": 1.0
+     }
+    ]
+   },
+   {
+    "text": "In My World, every build and chest saves, so you can turn it into a series.",
+    "clips": [
+     {
+      "id": "b095e707d9b4",
+      "at": 1.0,
+      "lift": 1.3
+     },
+     {
+      "id": "9e6d69010bf3",
+      "at": 3.0
+     },
+     {
+      "id": "45a92ea7060f",
+      "at": 0.5
+     }
+    ]
+   },
+   {
+    "text": "Then dig down into glowing crystal caves full of ore.",
+    "clips": [
+     {
+      "id": "7023efcfece8",
+      "at": 1.0,
+      "lift": 1.1
+     },
+     {
+      "id": "2c75f88f951d",
+      "at": 2.0,
+      "lift": 1.2
+     },
+     {
+      "id": "58c1e6108435",
+      "at": 4.0,
+      "lift": 1.2
+     }
+    ]
+   },
+   {
+    "text": "Minerscave is free on Roblox right now.",
+    "clips": [
+     {
+      "id": "207442290c98",
+      "at": 0.5
+     }
+    ]
+   },
+   {
+    "text": "Use code CREATOR for a free starter kit. Go play it.",
+    "clips": [
+     {
+      "id": "d8395c1110e0",
+      "at": 8.0
+     }
+    ]
+   }
+  ],
+  "sfx": [
+   {
+    "f": "Intro sound (correct).mp3",
+    "t": 0,
+    "v": 0.5
+   },
+   {
+    "f": "Camera flash.mp3",
+    "shot": 1,
+    "t": 0,
+    "v": 0.5
+   },
+   {
+    "f": "Boom.mp3",
+    "shot": 2,
+    "t": 0,
+    "v": 0.5
+   },
+   {
+    "f": "Pop.mp3",
+    "shot": 12,
+    "t": 0,
+    "v": 0.6
+   },
+   {
+    "f": "Riser.mp3",
+    "t": "cta",
+    "before": 2.6,
+    "v": 0.35
+   },
+   {
+    "f": "Pop.mp3",
+    "t": "card",
+    "v": 0.7
+   }
+  ]
+ },
+ {
+  "name": "minerscave-3",
+  "music": "New Donk City.mp3",
+  "highlight": [
+   "night",
+   "Minerscave",
+   "infected",
+   "sword",
+   "armor",
+   "friends",
+   "thirteen",
+   "free",
+   "CREATOR"
+  ],
+  "cta_sentence": 5,
+  "sentences": [
+   {
+    "text": "Never get caught outside at night in this Roblox game.",
+    "clips": [
+     {
+      "id": "352f62b7c569",
+      "at": 1.0,
+      "lift": 1.4
+     },
+     {
+      "id": "952800343a36",
+      "at": 3.0,
+      "lift": 1.4,
+      "flash": true
+     }
+    ]
+   },
+   {
+    "text": "This is Minerscave, and when night falls, the infected come out.",
+    "clips": [
+     {
+      "id": "54a7be1cc052",
+      "at": 1.0,
+      "bw": true,
+      "lift": 1.3
+     },
+     {
+      "id": "656703eddc7d",
+      "at": 1.0,
+      "lift": 1.4
+     },
+     {
+      "id": "1488dadff345",
+      "at": 2.0,
+      "lift": 1.4
+     }
+    ]
+   },
+   {
+    "text": "Tip one, craft a sword before dark.",
+    "clips": [
+     {
+      "id": "4ab75bdd4897",
+      "at": 0.5
+     },
+     {
+      "id": "4ab75bdd4897",
+      "at": 3.3
+     }
+    ]
+   },
+   {
+    "text": "Tip two, get steel armor, because they hit hard.",
+    "clips": [
+     {
+      "id": "c19119c0a42a",
+      "at": 1.0
+     },
+     {
+      "id": "952800343a36",
+      "at": 6.0,
+      "lift": 1.4
+     }
+    ]
+   },
+   {
+    "text": "Tip three, bring your friends. There are thirteen types of infected.",
+    "clips": [
+     {
+      "id": "c4558340b445",
+      "at": 2.0,
+      "lift": 1.4
+     },
+     {
+      "id": "617c3f2de9c9",
+      "at": 1.0,
+      "lift": 1.2
+     },
+     {
+      "id": "352f62b7c569",
+      "at": 13.0,
+      "lift": 1.4
+     }
+    ]
+   },
+   {
+    "text": "Minerscave is free on Roblox right now.",
+    "clips": [
+     {
+      "id": "617c3f2de9c9",
+      "at": 3.0,
+      "lift": 1.2
+     }
+    ]
+   },
+   {
+    "text": "Use code CREATOR for a free starter kit. Go play it.",
+    "clips": [
+     {
+      "id": "952800343a36",
+      "at": 7.5,
+      "lift": 1.4
+     }
+    ]
+   }
+  ],
+  "sfx": [
+   {
+    "f": "Intro sound (correct).mp3",
+    "t": 0,
+    "v": 0.5
+   },
+   {
+    "f": "Camera flash.mp3",
+    "shot": 1,
+    "t": 0,
+    "v": 0.5
+   },
+   {
+    "f": "Boom.mp3",
+    "shot": 2,
+    "t": 0,
+    "v": 0.55
+   },
+   {
+    "f": "Bang.mp3",
+    "shot": 6,
+    "t": 0,
+    "v": 0.45
+   },
+   {
+    "f": "Riser.mp3",
+    "t": "cta",
+    "before": 2.6,
+    "v": 0.35
+   },
+   {
+    "f": "Pop.mp3",
+    "t": "card",
+    "v": 0.7
+   }
+  ]
+ }
+]
