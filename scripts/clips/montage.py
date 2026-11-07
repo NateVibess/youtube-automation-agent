@@ -248,15 +248,15 @@ def build(cfg, opts, preset, manifest):
         source = os.path.join(opts.library, os.path.basename(meta['url']))
         dur = shot['frames'] / FPS
         offset = min(shot.get('at', 0), max(0, meta.get('dur', 0) - dur - 0.1))
-        zoom = shot.get('zoom', 0.07)
+        zoom = shot.get('zoom', 0 if cfg.get('layout') == 'fill' else 0.07)
         post = []
         if shot.get('lift'): post.append(f"eq=gamma={shot['lift']}:saturation=1.15")
         if shot.get('bw'): post.append('hue=s=0,eq=contrast=1.15')
         if shot.get('flash'): post.append('fade=in:st=0:d=0.18:color=white')
         if cfg.get('layout') == 'fill':
             cx = shot.get('cx', 0.5)
-            graph = (f"[0:v]fps={FPS},setpts=PTS-STARTPTS,crop=trunc(ih*9/16/2)*2:ih:(iw-ow)*{cx}:0,scale=1080:1920,"
-                     f"scale=w='trunc(1080*(1+{zoom}*t/{dur:.3f})/2)*2':h=-2:eval=frame,crop=1080:1920"
+            push = f",scale=w='trunc(1080*(1+{zoom}*t/{dur:.3f})/2)*2':h=-2:eval=frame,crop=1080:1920" if zoom else ''
+            graph = (f"[0:v]fps={FPS},setpts=PTS-STARTPTS,crop=trunc(ih*9/16/2)*2:ih:(iw-ow)*{cx}:0,scale=1080:1920{push}"
                      + ''.join(',' + p for p in post) + ',format=yuv420p[out]')
         else:
             graph = (f"[0:v]fps={FPS},setpts=PTS-STARTPTS,split[a][b];"
@@ -340,8 +340,12 @@ def build(cfg, opts, preset, manifest):
         inputs += ['-loop', '1', '-t', str(total), '-i', p['file']]
     for path, _, _ in sfx:
         inputs += ['-i', path]
-    amp = cfg.get('punch', 0.08)
-    zexpr = '+'.join(f"{amp}*gte(t,{t:.2f})*exp(-(t-{t:.2f})*7)" for t in pulses) or '0'
+    # Zoom cuts: each punch snaps in one step and holds until the next shot, so the frame never
+    # animates between sizes (animated zooms read as bouncing).
+    amp = cfg.get('punch', 0.06)
+    cut_times = [sh['t0'] for sh in shots[1:]] + [total]
+    holds = [(t, next(c for c in cut_times if c > t + 0.01)) for t in pulses]
+    zexpr = 'min({:.3f},{})'.format(2 * amp, '+'.join(f"{amp}*between(t,{a:.3f},{b - 0.001:.3f})" for a, b in holds)) if holds else '0'
     vchain = f"[0:v]scale=w='trunc(1080*(1+{zexpr})/2)*2':h=-2:eval=frame,crop=1080:1920[z]" if pulses else "[0:v]null[z]"
     graph = [vchain]
     if card['bounce']:
