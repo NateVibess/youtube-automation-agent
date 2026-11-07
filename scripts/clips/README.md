@@ -57,6 +57,27 @@ To use your own voiceover for a Short instead of text-to-speech, add `--voice-fi
 - **Captions:** they show what you actually said. Misheard words close to a script word take the script's spelling, so a misheard "mindscape" still shows as Minerscave.
 - **Rewording:** extra or missing sentences are reconciled with the script automatically.
 
+### High-energy Shorts (Huss Valley)
+
+`huss-valley-shorts.json` with `--preset huss-valley` makes Shorts where something happens on nearly every beat. These are the options it uses:
+
+| Option | Where it goes | What it does |
+|---|---|---|
+| `"layout": "fill"` | Short | Crops gameplay to fill 9:16. The per-clip `cx` setting (0–1) moves the crop sideways. |
+| `pops` | sentence | A list of beats. Each one is tied to the first spoken word starting with `word`, and can show a `text` badge (`color`/`textcolor` in ASS BGR) and an `img` from the library. It can add a `flash`, a zoom punch (on by default) and a sound effect (`sfx`). |
+| `word` | clip | Cuts to that clip on that spoken word instead of splitting the sentence evenly. |
+| `cut_sfx` | Short | Plays a sound on every cut. |
+| `captions` | Short | Caption font, size, y position, outline and highlight colour. |
+| `pop_size` | Short | Popup text size. |
+| `card` | Short | The CTA image. `bounce` makes it pop in large, for example the island code card. |
+
+Sound effects can be library files or `gen:whoosh`, `gen:ding`, `gen:impact` or `gen:tick`, which are synthesized with FFmpeg. The build prints the longest gap without a cut, popup or sound effect, so dead air is easy to spot.
+
+```bash
+node scripts/clips/fetch-bloxclips.js huss-valley-campaign /tmp/hv/lib
+python3 scripts/clips/montage.py scripts/clips/huss-valley-shorts.json --preset huss-valley --library /tmp/hv/lib --assets /tmp/hv/lib --rate +18%
+```
+
 Each Short in `minerscave-shorts.json` lists its sentences, the clip ids and start offsets under each sentence, and the music and sound effects. The Minerscave library has no music or sound effects, so the example uses the ones from the BloxClips boxing campaign. `--preset minerscave` is the default and warns when a Short falls outside 15–30s or never says "Minerscave" or the code.
 
 ## Layout

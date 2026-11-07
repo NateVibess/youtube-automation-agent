@@ -32,5 +32,20 @@
       "Only Minerscave, only features that exist in the game, and CREATOR is the only valid code.",
       "Post from a Roblox-focused account and join the BloxClips Discord to get paid."
     ]
+  },
+  "huss-valley": {
+    "creator": "Huss Valley",
+    "minSeconds": 15,
+    "maxSeconds": 30,
+    "code": "4650-1603-2769",
+    "codeSpoken": false,
+    "gameUrl": "https://fortnite.gg/island/4650-1603-2769",
+    "footage": "https://footage.bloxclips.com/huss-valley-campaign",
+    "hashtags": ["#hussvalley", "#fortnitemaps", "#uefn", "#fortnite", "#fortnitecreative", "#gaming"],
+    "guidance": [
+      "Fortnite map, not Roblox: post only from a Fortnite-focused account.",
+      "Hook in 2 seconds, say \"Huss Valley\", present it as out now in Fortnite, and show the island code 4650-1603-2769 and the island image during the CTA.",
+      "Only real features: runners vs sword hunters, revives, caught runners join the hunters, Hero or Chicken, map votes, gold, crates, swords, Rocket Shoes, Emergency Airhorn."
+    ]
   }
 }
