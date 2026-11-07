@@ -102,10 +102,42 @@ def tts_voice(cfg, work, opts):
     return voice[: int(total * SR)], words, spans, total
 
 
+def align_sentences(sentences, words):
+    """Index of the heard word where each script sentence starts. Script and heard words are matched
+    with difflib; a sentence starts at its first matched word, moved back over unmatched words that
+    follow the previous sentence's end punctuation (e.g. a reworded opening)."""
+    norm = lambda t: re.sub('[^a-z0-9]', '', t.lower())
+    script, owner = [], []
+    for k, sentence in enumerate(sentences):
+        for token in sentence['text'].split():
+            script.append(norm(token)); owner.append(k)
+    heard = [norm(w['w']) for w in words]
+    matched = {}
+    for block in difflib.SequenceMatcher(None, script, heard, autojunk=False).get_matching_blocks():
+        for d in range(block.size):
+            matched[block.a + d] = block.b + d
+    heard_matched = set(matched.values())
+    starts = [0]
+    for k in range(1, len(sentences)):
+        hits = [matched[j] for j, o in enumerate(owner) if o == k and j in matched and matched[j] > starts[-1]]
+        if not hits:
+            starts.append(starts[-1] + 1)
+            continue
+        if len(hits) > 1 and words[hits[0]]['w'][-1:] in '.!?':
+            hits = hits[1:]
+        h = c = hits[0]
+        while c - 1 > starts[-1] and c - 1 not in heard_matched and words[c - 1]['w'][-1:] not in '.!?':
+            c -= 1
+        if words[c - 1]['w'][-1:] in '.!?':
+            h = c
+        starts.append(h)
+    return starts
+
+
 def recorded_voice(path, cfg, preset, code, max_gap=0.22, keep=0.08):
-    """Use a human voiceover: Whisper gives word times, long pauses are cut down, and the sentence
-    starts (by end punctuation, or else the largest pauses) drive the cuts. Misheard spellings of the
-    game name and code are fixed in the captions only."""
+    """Use a human voiceover: Whisper gives word times, long pauses are cut down, and each script
+    sentence's start is found in the recording by word matching, so reworded or extra lines still cut
+    in the right place. Misheard spellings of the game name and code are fixed in the captions."""
     from faster_whisper import WhisperModel
     audio = decode(path)
     raw16 = subprocess.run(['ffmpeg', '-v', 'error', '-i', path, '-f', 'f32le', '-ac', '1', '-ar', '16000', '-'], capture_output=True).stdout
@@ -118,20 +150,18 @@ def recorded_voice(path, cfg, preset, code, max_gap=0.22, keep=0.08):
             raw.append({'w': w.word.strip(), 's': w.start, 'e': w.end})
 
     game = preset.get('creator', '').lower()
-    vocab = {}
-    for token in ' '.join(s['text'] for s in cfg['sentences']).split():
-        core = token.strip('.,!?')
-        vocab.setdefault(re.sub('[^a-z]', '', core.lower()), core)
+    fixes = cfg.get('caption_fixes', {})
     for w in raw:
         letters = re.sub('[^a-z]', '', w['w'].lower())
         tail = re.sub(r'^.*?([.,!?]*)$', r'\1', w['w'])
-        close = difflib.get_close_matches(letters, vocab, n=1, cutoff=0.6)
-        if close and len(letters) > 3 and not letters.startswith(close[0]):
-            w['w'] = vocab[close[0]] + tail
-        if game and (difflib.SequenceMatcher(None, letters.rstrip('s'), game).ratio() >= 0.7 or letters.rstrip('s') in ('mindscape', 'minescape', 'minerscape')):
+        if w['w'].rstrip('.,!?') in fixes:
+            w['w'] = fixes[w['w'].rstrip('.,!?')] + tail
+        elif game and (difflib.SequenceMatcher(None, letters.rstrip('s'), game).ratio() >= 0.7 or letters.rstrip('s') in ('mindscape', 'minescape', 'minerscape')):
             w['w'] = preset['creator'] + tail
         elif letters == code.lower():
             w['w'] = code + tail
+        elif letters == 'roblox':
+            w['w'] = 'Roblox' + tail
 
     pieces, words, out_t = [], [], 0.0
     start = max(0.0, raw[0]['s'] - 0.06)
@@ -145,23 +175,12 @@ def recorded_voice(path, cfg, preset, code, max_gap=0.22, keep=0.08):
     loud = np.flatnonzero(np.abs(voice) > 0.02)
     voice = voice[: (loud[-1] if len(loud) else len(voice)) + int(0.15 * SR)]
 
-    # Sentence starts by end punctuation, then reconcile with the script's sentence count: merge the
-    # shortest extra sentence into the one before it, or split the longest at its biggest pause.
-    n = len(cfg['sentences'])
-    starts = [0] + [i + 1 for i, w in enumerate(words[:-1]) if w['w'][-1:] in '.!?']
-    while len(starts) > n:
-        sizes = [(b - a, k) for k, (a, b) in enumerate(zip(starts, starts[1:] + [len(words)])) if k]
-        starts.pop(min(sizes)[1])
-    while len(starts) < n:
-        bounds = list(zip(starts, starts[1:] + [len(words)]))
-        a, b = max(bounds, key=lambda r: r[1] - r[0])
-        if b - a < 2:
-            break
-        starts = sorted(starts + [max(range(a + 1, b), key=lambda i: words[i]['s'] - words[i - 1]['e'])])
+    starts = align_sentences(cfg['sentences'], words)
     spans = [0.0] + [words[i]['s'] - 0.05 for i in starts[1:]]
     total = round(len(voice) / SR + cfg.get('tail', 0.8) - 0.15, 2)
     voice = np.concatenate([voice, np.zeros(int((total - len(voice) / SR) * SR) + 1, np.float32)])[: int(total * SR)]
     print(f"{cfg['name']}: recording {len(audio) / SR:.1f}s -> {total}s after trimming pauses; heard: {' '.join(w['w'] for w in words)}")
+    print('  sentence starts: ' + ' | '.join(f"{words[i]['s']:.1f}s {words[i]['w']}" for i in starts))
     return voice, words, spans, total
 
 

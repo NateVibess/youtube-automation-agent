@@ -321,6 +321,7 @@
  },
  {
   "name": "minerscave-3",
+  "caption_fixes": {"Ever": "Never"},
   "music": "New Donk City.mp3",
   "highlight": [
    "night",
