@@ -34,7 +34,7 @@ async function fetchInPage(page, url) {
     const bytes = new Uint8Array(await response.arrayBuffer());
     let binary = '';
     for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-    return { status: response.status, data: btoa(binary) };
+    return { status: response.status, data: globalThis.btoa(binary) };
   }, url);
   if (!result.data) throw new Error(`HTTP ${result.status} for ${url}`);
   return Buffer.from(result.data, 'base64');
