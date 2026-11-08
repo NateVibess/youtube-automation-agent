@@ -83,6 +83,16 @@ A pop can also add a reaction sticker with `"react": "theater.gif"`. Files come 
 
 GIFs play from their first frame on the beat and loop if the beat is longer than the GIF. A pop's text badge moves to the lower slot when it has a sticker.
 
+**Building before the voiceover exists.** Run with `--guide` to time the captions from the script text at a typical sped-up pace, with no voice at all. That's enough to check the cuts, popups, stickers and sound effects. When the recording arrives, re-run with `--voice-file NAME=PATH` and everything moves to the real word times. These options also help:
+
+- **Music:** `music` is optional. Leave it out to use only game audio and sound effects, as `minerscave-shorts-2.json` does.
+- **Trimming long sounds:** `sfx_from`/`sfx_dur` on a pop (`from`/`dur` in the top-level `sfx` list) trim a long meme sound to its hit, with a 0.15s fade.
+
+```bash
+python3 scripts/clips/montage.py scripts/clips/minerscave-shorts-2.json --guide --library /tmp/mc/clips \
+  --assets <store>/media/sfx --reactions <store>/media/reactions --card /tmp/mc/roblox-card.png
+```
+
 Sound effects can be library files or `gen:whoosh`, `gen:ding`, `gen:impact` or `gen:tick`, which are synthesized with FFmpeg. The build prints the longest gap without a cut, popup or sound effect, so dead air is easy to spot.
 
 ```bash
