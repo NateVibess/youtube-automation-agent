@@ -26,6 +26,26 @@ def run(cmd):
     return r
 
 
+GENERATED_SFX = {
+    'whoosh': 'anoisesrc=d=0.4:c=pink:a=0.6,highpass=f=500,lowpass=f=5000,afade=t=in:d=0.16,afade=t=out:st=0.16:d=0.24',
+    'ding': 'sine=f=1568:d=0.45,afade=t=out:st=0:d=0.45:curve=exp,volume=0.7',
+    'impact': 'sine=f=52:d=0.5,afade=t=out:st=0.02:d=0.48:curve=exp,volume=2',
+    'tick': 'sine=f=1200:d=0.04,afade=t=out:st=0:d=0.04,volume=0.6',
+}
+
+
+def sfx_path(name, assets):
+    """Library sound effects by file name, or 'gen:NAME' for a small synthesized effect."""
+    if not name.startswith('gen:'):
+        return os.path.join(assets, name)
+    key = name[4:]
+    out = os.path.join(os.path.expanduser('~/.cache/clips-sfx'), f'{key}.wav')
+    if not os.path.exists(out):
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', GENERATED_SFX[key], '-ar', str(SR), '-ac', '2', out])
+    return out
+
+
 def ensure_fonts():
     """Static SemiBold/ExtraBold instances of TikTok Sans with distinct family names for libass."""
     os.makedirs(FONT_DIR, exist_ok=True)
@@ -49,16 +69,22 @@ def ensure_fonts():
         font.save(os.path.join(FONT_DIR, filename))
 
 
-async def tts(text, out, voice, rate):
-    communicate = edge_tts.Communicate(text, voice, rate=rate, boundary='WordBoundary')
-    words = []
-    with open(out, 'wb') as f:
-        async for chunk in communicate.stream():
-            if chunk['type'] == 'audio':
-                f.write(chunk['data'])
-            elif chunk['type'] == 'WordBoundary':
-                words.append({'w': chunk['text'], 's': chunk['offset'] / 1e7, 'e': (chunk['offset'] + chunk['duration']) / 1e7})
-    return words
+async def tts(text, out, voice, rate, attempts=4):
+    for attempt in range(attempts):
+        try:
+            communicate = edge_tts.Communicate(text, voice, rate=rate, boundary='WordBoundary')
+            words = []
+            with open(out, 'wb') as f:
+                async for chunk in communicate.stream():
+                    if chunk['type'] == 'audio':
+                        f.write(chunk['data'])
+                    elif chunk['type'] == 'WordBoundary':
+                        words.append({'w': chunk['text'], 's': chunk['offset'] / 1e7, 'e': (chunk['offset'] + chunk['duration']) / 1e7})
+            return words
+        except edge_tts.exceptions.EdgeTTSException:
+            if attempt == attempts - 1:
+                raise
+            await asyncio.sleep(2 ** attempt)
 
 
 def decode(path):
@@ -76,7 +102,7 @@ def check_rules(cfg, preset, total):
     problems = []
     if preset.get('creator') and preset['creator'].lower() not in text.lower():
         problems.append(f"script never says {preset['creator']}")
-    if preset.get('code') and preset['code'] not in text:
+    if preset.get('code') and preset.get('codeSpoken', True) and preset['code'] not in text:
         problems.append(f"script never says code {preset['code']}")
     if not preset.get('minSeconds', 0) <= total <= preset.get('maxSeconds', 1e9):
         problems.append(f"duration {total}s is outside {preset.get('minSeconds')}-{preset.get('maxSeconds')}s")
@@ -203,11 +229,17 @@ def build(cfg, opts, preset, manifest):
 
     bounds = [0.0] + spans[1:] + [total]
     shots = []
+    in_sentence = lambda i: [w for w in words if bounds[i] - 0.06 <= w['s'] < bounds[i + 1] - 0.06]
     for i, sentence in enumerate(cfg['sentences']):
         step = (bounds[i + 1] - bounds[i]) / len(sentence['clips'])
+        cuts = [bounds[i] + k * step for k in range(len(sentence['clips']))] + [bounds[i + 1]]
+        for k, clip in enumerate(sentence['clips'][1:], 1):
+            anchor = re.sub('[^a-z0-9]', '', clip.get('word', '').lower())
+            hit = next((w for w in in_sentence(i) if anchor and re.sub('[^a-z0-9]', '', w['w'].lower()).startswith(anchor)), None)
+            if hit and cuts[k - 1] + 0.3 < hit['s'] - 0.05 < cuts[k + 1] - 0.3:
+                cuts[k] = hit['s'] - 0.05
         for k, clip in enumerate(sentence['clips']):
-            f0 = round((bounds[i] + k * step) * FPS)
-            f1 = round((bounds[i] + (k + 1) * step) * FPS)
+            f0, f1 = round(cuts[k] * FPS), round(cuts[k + 1] * FPS)
             shots.append({**clip, 't0': f0 / FPS, 'frames': f1 - f0})
 
     segments = []
@@ -216,15 +248,21 @@ def build(cfg, opts, preset, manifest):
         source = os.path.join(opts.library, os.path.basename(meta['url']))
         dur = shot['frames'] / FPS
         offset = min(shot.get('at', 0), max(0, meta.get('dur', 0) - dur - 0.1))
-        zoom = shot.get('zoom', 0.07)
+        zoom = shot.get('zoom', 0 if cfg.get('layout') == 'fill' else 0.07)
         post = []
         if shot.get('lift'): post.append(f"eq=gamma={shot['lift']}:saturation=1.15")
         if shot.get('bw'): post.append('hue=s=0,eq=contrast=1.15')
         if shot.get('flash'): post.append('fade=in:st=0:d=0.18:color=white')
-        graph = (f"[0:v]fps={FPS},setpts=PTS-STARTPTS,split[a][b];"
-                 "[a]scale=-2:480,crop=270:480,boxblur=12:2,scale=1080:1920,eq=brightness=-0.10:saturation=1.1[bg];"
-                 f"[b]crop=ih*1.1:ih,scale=1080:-2,scale=w='trunc(1080*(1+{zoom}*t/{dur:.3f})/2)*2':h=-2:eval=frame,crop=1080:982[fg];"
-                 "[bg][fg]overlay=(W-w)/2:(H-h)/2" + ''.join(',' + p for p in post) + ',format=yuv420p[out]')
+        if cfg.get('layout') == 'fill':
+            cx = shot.get('cx', 0.5)
+            push = f",scale=w='trunc(1080*(1+{zoom}*t/{dur:.3f})/2)*2':h=-2:eval=frame,crop=1080:1920" if zoom else ''
+            graph = (f"[0:v]fps={FPS},setpts=PTS-STARTPTS,crop=trunc(ih*9/16/2)*2:ih:(iw-ow)*{cx}:0,scale=1080:1920{push}"
+                     + ''.join(',' + p for p in post) + ',format=yuv420p[out]')
+        else:
+            graph = (f"[0:v]fps={FPS},setpts=PTS-STARTPTS,split[a][b];"
+                     "[a]scale=-2:480,crop=270:480,boxblur=12:2,scale=1080:1920,eq=brightness=-0.10:saturation=1.1[bg];"
+                     f"[b]crop=ih*1.1:ih,scale=1080:-2,scale=w='trunc(1080*(1+{zoom}*t/{dur:.3f})/2)*2':h=-2:eval=frame,crop=1080:982[fg];"
+                     "[bg][fg]overlay=(W-w)/2:(H-h)/2" + ''.join(',' + p for p in post) + ',format=yuv420p[out]')
         out = os.path.join(work, f'shot{k:02d}.mp4')
         run(['ffmpeg', '-v', 'error', '-y', '-ss', f'{offset:.3f}', '-i', source, '-t', f'{dur:.4f}', '-filter_complex', graph,
              '-map', '[out]', '-map', '0:a', '-af', f'aresample={SR},aformat=channel_layouts=stereo,apad', '-frames:v', str(shot['frames']),
@@ -237,46 +275,142 @@ def build(cfg, opts, preset, manifest):
 
     highlight = {h.lower() for h in cfg.get('highlight', [])}
     cta_t = spans[cfg['cta_sentence']]
-    code_word = next(w for w in words if w['w'].strip('.,!?').upper() == code.upper())
+    cap = {'size': 92, 'y': 1190, 'font': 'TTS Cap Semi', 'outline': 4.5, 'highlight': '&H003C3CF0&', **cfg.get('captions', {})}
+    code_word = next((w for w in words if w['w'].strip('.,!?').upper() == code.upper()), None)
     lines = ['[Script Info]', 'ScriptType: v4.00+', 'PlayResX: 1080', 'PlayResY: 1920', 'WrapStyle: 2', '', '[V4+ Styles]',
              'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-             'Style: Cap,TTS Cap Semi,92,&H00FFFFFF,&H00FFFFFF,&H00141414,&H64000000,0,0,0,0,100,100,0,0,1,4.5,2,5,40,40,0,1',
+             f"Style: Cap,{cap['font']},{cap['size']},&H00FFFFFF,&H00FFFFFF,&H00141414,&H64000000,0,0,0,0,100,100,0,0,1,{cap['outline']},2,5,40,40,0,1",
              'Style: Code,TTS Cap XBold,70,&H00000000,&H00000000,&H0000D4FF,&H0000D4FF,0,0,0,0,100,100,1,0,3,22,0,5,40,40,0,1',
+             f"Style: Pop,TTS Cap XBold,{cfg.get('pop_size', 78)},&H00FFFFFF,&H00FFFFFF,&H003C3CF0,&H00000000,0,0,0,0,100,100,1,0,3,{round(cfg.get('pop_size', 78) * 0.23)},0,5,40,40,0,1",
+             'Style: Flash,TTS Cap Semi,10,&H00FFFFFF,&H00FFFFFF,&H00FFFFFF,&H00FFFFFF,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1',
              '', '[Events]', 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text']
     for j, w in enumerate(words):
         text = re.sub(r'[.,!?:;]+$', '', w['w'])
         end = min(words[j + 1]['s'], w['s'] + 0.9) if j + 1 < len(words) else min(total, w['e'] + 0.6)
-        colour = r'{\c&H003C3CF0&}' if text.lower() in highlight else ''
-        lines.append(f"Dialogue: 2,{ass_time(w['s'])},{ass_time(end)},Cap,,0,0,0,,{{\\pos(540,1190)\\fscx88\\fscy88\\t(0,70,\\fscx100\\fscy100)}}{colour}{text}")
-    lines.append(f"Dialogue: 1,{ass_time(code_word['s'])},{ass_time(total)},Code,,0,0,0,,{{\\pos(540,1540)\\fad(120,0)\\fscx80\\fscy80\\t(0,120,\\fscx100\\fscy100)}}CODE: {code}")
+        colour = '{\\c' + cap['highlight'] + '}' if text.lower() in highlight else ''
+        lines.append(f"Dialogue: 2,{ass_time(w['s'])},{ass_time(end)},Cap,,0,0,0,,{{\\pos(540,{cap['y']})\\fscx80\\fscy80\\t(0,60,\\fscx106\\fscy106)\\t(60,120,\\fscx100\\fscy100)}}{colour}{text}")
+    if code_word and cfg.get('code_box', True):
+        lines.append(f"Dialogue: 1,{ass_time(code_word['s'])},{ass_time(total)},Code,,0,0,0,,{{\\pos(540,1540)\\fad(120,0)\\fscx80\\fscy80\\t(0,120,\\fscx100\\fscy100)}}CODE: {code}")
+
+    # Beats: popups (text badges or images), zoom punches, white flashes and their sound effects,
+    # anchored to the first spoken word of a sentence that starts with the given text.
+    sfx = []
+    for ev in cfg.get('sfx', []):
+        at = shots[ev['shot']]['t0'] if 'shot' in ev else cta_t - ev['before'] if 'before' in ev else cta_t if ev.get('t') in ('cta', 'card') else ev.get('t', 0)
+        sfx.append((sfx_path(ev['f'], opts.assets), max(0, at), ev.get('v', 0.6)))
+    cut = cfg.get('cut_sfx')
+    if cut:
+        for shot in shots[1:]:
+            sfx.append((sfx_path(cut['f'], opts.assets), shot['t0'], cut.get('v', 0.35)))
+    norm = lambda t: re.sub('[^a-z0-9]', '', t.lower())
+    sent_of = [max(i for i, sp in enumerate(spans) if sp <= w['s'] + 0.06) for w in words]
+    pulses, image_pops, reactions = [], [], []
+    side = 0
+    for i, sentence in enumerate(cfg['sentences']):
+        for pop in sentence.get('pops', []):
+            anchor = norm(pop.get('word', ''))
+            hit = next((w for j, w in enumerate(words) if sent_of[j] == i and anchor and norm(w['w']).startswith(anchor)), None)
+            t0 = (hit['s'] if hit else spans[i]) + pop.get('dt', 0)
+            dur = pop.get('dur', 0.9)
+            if pop.get('text'):
+                side += 1
+                default = (540, 1500) if pop.get('react') else (540 + (110 if side % 2 else -110), 520 if side % 2 else 1480)
+                x, y = pop.get('pos', default)
+                rot = pop.get('rot', -6 if side % 2 else 5)
+                box = pop.get('color', '&H003C3CF0&')
+                txt = pop.get('textcolor', '&H00FFFFFF&')
+                lines.append(f"Dialogue: 3,{ass_time(t0)},{ass_time(t0 + dur)},Pop,,0,0,0,,{{\\pos({x},{y})\\frz{rot}\\3c{box}\\c{txt}\\fscx30\\fscy30\\t(0,90,\\fscx118\\fscy118)\\t(90,170,\\fscx100\\fscy100)\\fad(0,120)}}{pop['text']}")
+            if pop.get('img'):
+                image_pops.append({'file': os.path.join(opts.library, pop['img']), 't': t0, 'dur': dur, 'w': pop.get('w', 820), 'y': pop.get('y', 360)})
+            if pop.get('react'):
+                path = pop['react'] if os.path.isabs(pop['react']) else os.path.join(opts.reactions, pop['react'])
+                reactions.append({'file': path, 't': t0 + pop.get('react_dt', 0), 'dur': pop.get('react_dur', 1.4), 'w': pop.get('w', 400),
+                                  'cx': pop.get('cx', 780), 'cy': pop.get('cy', 560), 'rot': pop.get('rot_react', 4),
+                                  'style': pop.get('style', 'cam'), 'flip': pop.get('flip', ''), 'start': pop.get('start', 0)})
+            if pop.get('flash'):
+                lines.append(f"Dialogue: 4,{ass_time(t0)},{ass_time(t0 + 0.2)},Flash,,0,0,0,,{{\\an7\\pos(0,0)\\p1\\fad(0,170)}}m 0 0 l 1080 0 1080 1920 0 1920{{\\p0}}")
+            if pop.get('zoom', True):
+                pulses.append(t0)
+            if pop.get('sfx'):
+                sfx.append((sfx_path(pop['sfx'], opts.assets), t0, pop.get('v', 0.55)))
     captions = os.path.join(work, 'captions.ass')
     with open(captions, 'w') as f:
         f.write('\n'.join(lines) + '\n')
 
-    sfx = []
-    for ev in cfg.get('sfx', []):
-        at = shots[ev['shot']]['t0'] if 'shot' in ev else cta_t - ev['before'] if 'before' in ev else cta_t if ev.get('t') in ('cta', 'card') else ev.get('t', 0)
-        sfx.append((os.path.join(opts.assets, ev['f']), max(0, at), ev.get('v', 0.6)))
+    card = {'file': opts.card, 'w': None, 'y': 330, 'bounce': False, **cfg.get('card', {})}
+    if not os.path.isabs(card['file']):
+        card['file'] = os.path.join(opts.library, card['file'])
     inputs = ['-i', os.path.join(work, 'base.mp4'), '-i', os.path.join(work, 'voice.wav'),
-              '-ss', str(cfg.get('music_at', 0)), '-i', os.path.join(opts.assets, cfg['music']), '-loop', '1', '-t', str(total), '-i', opts.card]
+              '-ss', str(cfg.get('music_at', 0)), '-i', os.path.join(opts.assets, cfg['music']), '-loop', '1', '-t', str(total), '-i', card['file']]
+    for p in image_pops:
+        inputs += ['-loop', '1', '-t', str(total), '-i', p['file']]
+    for r in reactions:
+        if r['file'].lower().endswith('.gif'):
+            inputs += ['-ignore_loop', '0', '-ss', str(r['start']), '-t', f"{r['dur']:.3f}", '-i', r['file']]
+        else:
+            inputs += ['-loop', '1', '-t', f"{r['dur']:.3f}", '-i', r['file']]
     for path, _, _ in sfx:
         inputs += ['-i', path]
-    graph = [f"[3:v]format=rgba,fade=in:st={cta_t:.2f}:d=0.25:alpha=1[card]",
-             f"[0:v][card]overlay=(W-w)/2:330:enable='gte(t,{cta_t:.2f})',subtitles={captions}:fontsdir={FONT_DIR}[vout]",
-             f"[0:a]volume={cfg.get('game_vol', 0.3)}[ga]",
-             "[1:a]aresample=48000,aformat=channel_layouts=stereo,highpass=f=90,acompressor=threshold=0.1:ratio=3:attack=5:release=80:makeup=1.4,asplit[vo][vsc]",
-             f"[2:a]aresample=48000,aformat=channel_layouts=stereo,atrim=0:{total},volume={cfg.get('music_vol', 0.16)},afade=t=out:st={total - 0.6:.2f}:d=0.6[mraw]",
-             "[mraw][vsc]sidechaincompress=threshold=0.02:ratio=6:attack=10:release=300[mu]"]
+    # Zoom cuts: each punch snaps in one step and holds until the next shot, so the frame never
+    # animates between sizes (animated zooms read as bouncing).
+    amp = cfg.get('punch', 0.06)
+    cut_times = [sh['t0'] for sh in shots[1:]] + [total]
+    holds = [(t, next(c for c in cut_times if c > t + 0.01)) for t in pulses]
+    zexpr = 'min({:.3f},{})'.format(2 * amp, '+'.join(f"{amp}*between(t,{a:.3f},{b - 0.001:.3f})" for a, b in holds)) if holds else '0'
+    vchain = f"[0:v]scale=w='trunc(1080*(1+{zexpr})/2)*2':h=-2:eval=frame,crop=1080:1920[z]" if pulses else "[0:v]null[z]"
+    graph = [vchain]
+    if card['bounce']:
+        cw = card['w'] or 940
+        iw, ih = map(int, run(['ffprobe', '-v', 'error', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', card['file']]).stdout.split(',')[:2])
+        graph.append(f"[3:v]format=rgba,scale=w='trunc({cw}*min(1,0.55+3.5*max(0,t-{cta_t:.2f})+0.08*sin(min(1,max(0,t-{cta_t:.2f})*5)*3.14))/2)*2':h=-2:eval=frame[card]")
+        graph.append(f"[z][card]overlay=(W-w)/2:{card['y']}+({cw * ih / iw:.0f}-h)/2:enable='gte(t,{cta_t:.2f})'[v0]")
+    else:
+        scale = f",scale={card['w']}:-2" if card['w'] else ''
+        graph.append(f"[3:v]format=rgba{scale},fade=in:st={cta_t:.2f}:d=0.25:alpha=1[card]")
+        graph.append(f"[z][card]overlay=(W-w)/2:{card['y']}:enable='gte(t,{cta_t:.2f})'[v0]")
+    last = 'v0'
+    for k, p in enumerate(image_pops):
+        t0, t1 = p['t'], p['t'] + p['dur']
+        graph.append(f"[{4 + k}:v]format=rgba,pad=iw+24:ih+24:12:12:white,scale=w='trunc({p['w']}*min(1,0.4+5*max(0,t-{t0:.2f}))/2)*2':h=-2:eval=frame[ip{k}]")
+        graph.append(f"[{last}][ip{k}]overlay=(W-w)/2:{p['y']}:enable='between(t,{t0:.2f},{t1:.2f})'[v{k + 1}]")
+        last = f'v{k + 1}'
+    # Reaction stickers: GIFs play from their first frame at the beat (looping if the beat is longer),
+    # 'cam' gets a white border and a slight tilt, 'round' is masked to a circle, 'plain' keeps its own alpha.
+    first_react = 4 + len(image_pops)
+    for k, r in enumerate(reactions):
+        t0, t1, w = r['t'], r['t'] + r['dur'], r['w']
+        chain = [f"fps={FPS}", 'format=rgba', f"scale={w}:-2"]
+        if 'h' in r['flip']: chain.append('hflip')
+        if 'v' in r['flip']: chain.append('vflip')
+        if r['style'] == 'round':
+            chain.append("geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte(hypot(X-W/2,Y-H/2),min(W,H)/2-2),255,0)'")
+        elif r['style'] == 'cam':
+            chain += ['pad=iw+16:ih+16:8:8:white', f"rotate={r['rot']}*PI/180:c=none:ow=rotw({r['rot']}*PI/180):oh=roth({r['rot']}*PI/180)"]
+        chain += [f"setpts=PTS-STARTPTS+{t0:.3f}/TB",
+                  f"scale=w='trunc(iw*min(1,0.7+3*max(0,t-{t0:.3f}))/2)*2':h=-2:eval=frame"]
+        graph.append(f"[{first_react + k}:v]{','.join(chain)}[re{k}]")
+        graph.append(f"[{last}][re{k}]overlay=x='{r['cx']}-w/2':y='{r['cy']}-h/2':eof_action=pass:enable='between(t,{t0:.3f},{t1:.3f})'[r{k}]")
+        last = f'r{k}'
+    graph.append(f"[{last}]subtitles={captions}:fontsdir={FONT_DIR}[vout]")
+    graph += [f"[0:a]volume={cfg.get('game_vol', 0.3)}[ga]",
+              "[1:a]aresample=48000,aformat=channel_layouts=stereo,highpass=f=90,acompressor=threshold=0.1:ratio=3:attack=5:release=80:makeup=1.4,asplit[vo][vsc]",
+              f"[2:a]aresample=48000,aformat=channel_layouts=stereo,atrim=0:{total},volume={cfg.get('music_vol', 0.16)},afade=t=out:st={total - 0.6:.2f}:d=0.6[mraw]",
+              "[mraw][vsc]sidechaincompress=threshold=0.02:ratio=6:attack=10:release=300[mu]"]
     mix = ['[ga]', '[vo]', '[mu]']
+    first_sfx = 4 + len(image_pops) + len(reactions)
     for k, (_, at, vol) in enumerate(sfx):
         ms = int(at * 1000)
-        graph.append(f"[{4 + k}:a]aresample=48000,aformat=channel_layouts=stereo,volume={vol},adelay={ms}|{ms}[s{k}]")
+        graph.append(f"[{first_sfx + k}:a]aresample=48000,aformat=channel_layouts=stereo,volume={vol},adelay={ms}|{ms}[s{k}]")
         mix.append(f'[s{k}]')
     graph.append(f"{''.join(mix)}amix=inputs={len(mix)}:normalize=0:duration=first,alimiter=limit=0.95,loudnorm=I=-14:TP=-1.5:LRA=11[aout]")
     out = os.path.join(opts.out, f'{name}.mp4')
     run(['ffmpeg', '-v', 'error', '-y', *inputs, '-filter_complex', ';'.join(graph), '-map', '[vout]', '-map', '[aout]',
          '-t', str(total), '-c:v', 'libx264', '-preset', 'medium', '-crf', '19', '-pix_fmt', 'yuv420p', '-r', str(FPS),
          '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-movflags', '+faststart', out])
+    events = sorted([sh['t0'] for sh in shots] + pulses + [a for _, a, _ in sfx])
+    gap = lambda ts: max((b - a for a, b in zip([0] + ts, ts + [total])), default=0)
+    print(f"  beats: {len(pulses)} popups, {len(sfx)} sound effects, {len(shots)} cuts; longest gap without a cut, popup or "
+          f"sound effect {gap(events):.2f}s, or {gap(sorted(events + [w['s'] for w in words])):.2f}s counting caption words")
     check_rules(cfg, preset, total)
     print(f'{out}: {total}s, {len(shots)} shots, CTA at {cta_t:.1f}s')
 
@@ -288,6 +422,7 @@ def main():
     parser.add_argument('--library', required=True, help='folder from fetch-bloxclips.js with manifest.json and the clips')
     parser.add_argument('--assets', required=True, help='folder with the music and sound effect files named in the config')
     parser.add_argument('--card', help='Roblox game page card PNG (default: <library>/roblox-card.png)')
+    parser.add_argument('--reactions', help='folder with reaction GIFs/PNGs named by "react" pops (default: <library>/reactions)')
     parser.add_argument('--preset', default='minerscave')
     parser.add_argument('--work', default='/tmp/montage')
     parser.add_argument('--out', default='/tmp/montage/out')
@@ -297,6 +432,7 @@ def main():
                         help='use a recorded voiceover for one Short instead of text-to-speech (needs faster-whisper)')
     opts = parser.parse_args()
     opts.voice_files = dict(v.split('=', 1) for v in opts.voice_file)
+    opts.reactions = opts.reactions or os.path.join(opts.library, 'reactions')
     opts.card = opts.card or os.path.join(opts.library, 'roblox-card.png')
     os.makedirs(opts.out, exist_ok=True)
     ensure_fonts()
