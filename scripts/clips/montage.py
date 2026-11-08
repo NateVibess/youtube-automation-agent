@@ -110,6 +110,23 @@ def check_rules(cfg, preset, total):
         print(f"WARNING {cfg['name']}: {p}")
 
 
+def guide_voice(cfg, wps=4.6, gap=0.12):
+    """Silent placeholder: words timed from the script at a typical sped-up voiceover pace, so the
+    picture and sound effects can be assembled and reviewed before the recording arrives."""
+    words, spans, t = [], [], 0.0
+    for sentence in cfg['sentences']:
+        spans.append(t)
+        tokens = sentence['text'].split()
+        weights = [0.6 + len(re.sub('[^A-Za-z0-9]', '', w)) / 5 for w in tokens]
+        unit = len(tokens) / wps / sum(weights)
+        for w, k in zip(tokens, weights):
+            words.append({'w': w, 's': t, 'e': t + k * unit * 0.9})
+            t += k * unit
+        t += gap
+    total = round(t - gap + cfg.get('tail', 0.8), 2)
+    return np.zeros(int(total * SR), np.float32), words, spans, total
+
+
 def tts_voice(cfg, work, opts):
     voice = np.zeros(SR * 120, np.float32)
     t, words, spans, gap = 0.0, [], [], 0.07
@@ -220,9 +237,12 @@ def build(cfg, opts, preset, manifest):
     recording = (opts.voice_files or {}).get(name)
     if recording:
         voice, words, spans, total = recorded_voice(recording, cfg, preset, code)
+    elif opts.guide:
+        voice, words, spans, total = guide_voice(cfg)
     else:
         voice, words, spans, total = tts_voice(cfg, work, opts)
-    voice *= 0.89 / max(1e-6, np.abs(voice).max())
+    if np.abs(voice).max() > 0:
+        voice *= 0.89 / np.abs(voice).max()
     with wave.open(os.path.join(work, 'voice.wav'), 'wb') as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
         w.writeframes((np.clip(voice, -1, 1) * 32767).astype(np.int16).tobytes())
@@ -297,11 +317,11 @@ def build(cfg, opts, preset, manifest):
     sfx = []
     for ev in cfg.get('sfx', []):
         at = shots[ev['shot']]['t0'] if 'shot' in ev else cta_t - ev['before'] if 'before' in ev else cta_t if ev.get('t') in ('cta', 'card') else ev.get('t', 0)
-        sfx.append((sfx_path(ev['f'], opts.assets), max(0, at), ev.get('v', 0.6)))
+        sfx.append((sfx_path(ev['f'], opts.assets), max(0, at), ev.get('v', 0.6), ev.get('from', 0), ev.get('dur')))
     cut = cfg.get('cut_sfx')
     if cut:
         for shot in shots[1:]:
-            sfx.append((sfx_path(cut['f'], opts.assets), shot['t0'], cut.get('v', 0.35)))
+            sfx.append((sfx_path(cut['f'], opts.assets), shot['t0'], cut.get('v', 0.35), 0, None))
     norm = lambda t: re.sub('[^a-z0-9]', '', t.lower())
     sent_of = [max(i for i, sp in enumerate(spans) if sp <= w['s'] + 0.06) for w in words]
     pulses, image_pops, reactions = [], [], []
@@ -332,7 +352,7 @@ def build(cfg, opts, preset, manifest):
             if pop.get('zoom', True):
                 pulses.append(t0)
             if pop.get('sfx'):
-                sfx.append((sfx_path(pop['sfx'], opts.assets), t0, pop.get('v', 0.55)))
+                sfx.append((sfx_path(pop['sfx'], opts.assets), t0, pop.get('v', 0.55), pop.get('sfx_from', 0), pop.get('sfx_dur')))
     captions = os.path.join(work, 'captions.ass')
     with open(captions, 'w') as f:
         f.write('\n'.join(lines) + '\n')
@@ -341,7 +361,9 @@ def build(cfg, opts, preset, manifest):
     if not os.path.isabs(card['file']):
         card['file'] = os.path.join(opts.library, card['file'])
     inputs = ['-i', os.path.join(work, 'base.mp4'), '-i', os.path.join(work, 'voice.wav'),
-              '-ss', str(cfg.get('music_at', 0)), '-i', os.path.join(opts.assets, cfg['music']), '-loop', '1', '-t', str(total), '-i', card['file']]
+              *(['-ss', str(cfg.get('music_at', 0)), '-i', os.path.join(opts.assets, cfg['music'])] if cfg.get('music')
+                else ['-f', 'lavfi', '-t', str(total), '-i', f'anullsrc=r={SR}:cl=stereo']),
+              '-loop', '1', '-t', str(total), '-i', card['file']]
     for p in image_pops:
         inputs += ['-loop', '1', '-t', str(total), '-i', p['file']]
     for r in reactions:
@@ -349,8 +371,8 @@ def build(cfg, opts, preset, manifest):
             inputs += ['-ignore_loop', '0', '-ss', str(r['start']), '-t', f"{r['dur']:.3f}", '-i', r['file']]
         else:
             inputs += ['-loop', '1', '-t', f"{r['dur']:.3f}", '-i', r['file']]
-    for path, _, _ in sfx:
-        inputs += ['-i', path]
+    for path, _, _, start, dur in sfx:
+        inputs += ['-ss', str(start), *(['-t', str(dur)] if dur else []), '-i', path]
     # Zoom cuts: each punch snaps in one step and holds until the next shot, so the frame never
     # animates between sizes (animated zooms read as bouncing).
     amp = cfg.get('punch', 0.06)
@@ -398,19 +420,21 @@ def build(cfg, opts, preset, manifest):
               "[mraw][vsc]sidechaincompress=threshold=0.02:ratio=6:attack=10:release=300[mu]"]
     mix = ['[ga]', '[vo]', '[mu]']
     first_sfx = 4 + len(image_pops) + len(reactions)
-    for k, (_, at, vol) in enumerate(sfx):
+    for k, (_, at, vol, _, dur) in enumerate(sfx):
         ms = int(at * 1000)
-        graph.append(f"[{first_sfx + k}:a]aresample=48000,aformat=channel_layouts=stereo,volume={vol},adelay={ms}|{ms}[s{k}]")
+        fade = f",afade=t=out:st={max(0, dur - 0.15):.2f}:d=0.15" if dur else ''
+        graph.append(f"[{first_sfx + k}:a]aresample=48000,aformat=channel_layouts=stereo,volume={vol}{fade},adelay={ms}|{ms}[s{k}]")
         mix.append(f'[s{k}]')
     graph.append(f"{''.join(mix)}amix=inputs={len(mix)}:normalize=0:duration=first,alimiter=limit=0.95,loudnorm=I=-14:TP=-1.5:LRA=11[aout]")
     out = os.path.join(opts.out, f'{name}.mp4')
     run(['ffmpeg', '-v', 'error', '-y', *inputs, '-filter_complex', ';'.join(graph), '-map', '[vout]', '-map', '[aout]',
          '-t', str(total), '-c:v', 'libx264', '-preset', 'medium', '-crf', '19', '-pix_fmt', 'yuv420p', '-r', str(FPS),
          '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-movflags', '+faststart', out])
-    events = sorted([sh['t0'] for sh in shots] + pulses + [a for _, a, _ in sfx])
+    events = sorted([sh['t0'] for sh in shots] + pulses + [e[1] for e in sfx])
     gap = lambda ts: max((b - a for a, b in zip([0] + ts, ts + [total])), default=0)
+    at = max(zip([0] + events, events + [total]), key=lambda ab: ab[1] - ab[0])[0]
     print(f"  beats: {len(pulses)} popups, {len(sfx)} sound effects, {len(shots)} cuts; longest gap without a cut, popup or "
-          f"sound effect {gap(events):.2f}s, or {gap(sorted(events + [w['s'] for w in words])):.2f}s counting caption words")
+          f"sound effect {gap(events):.2f}s (from {at:.1f}s), or {gap(sorted(events + [w['s'] for w in words])):.2f}s counting caption words")
     check_rules(cfg, preset, total)
     print(f'{out}: {total}s, {len(shots)} shots, CTA at {cta_t:.1f}s')
 
@@ -428,6 +452,7 @@ def main():
     parser.add_argument('--out', default='/tmp/montage/out')
     parser.add_argument('--voice', default='en-US-AndrewNeural')
     parser.add_argument('--rate', default='+14%')
+    parser.add_argument('--guide', action='store_true', help='no voice: time captions from the script text to preview the picture and sound effects')
     parser.add_argument('--voice-file', action='append', default=[], metavar='NAME=PATH',
                         help='use a recorded voiceover for one Short instead of text-to-speech (needs faster-whisper)')
     opts = parser.parse_args()
