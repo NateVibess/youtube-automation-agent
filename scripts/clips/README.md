@@ -71,6 +71,18 @@ To use your own voiceover for a Short instead of text-to-speech, add `--voice-fi
 | `pop_size` | Short | Popup text size. |
 | `card` | Short | The CTA image. `bounce` makes it pop in large, for example the island code card. |
 
+A pop can also add a reaction sticker with `"react": "theater.gif"`. Files come from `--reactions DIR`, which defaults to `<library>/reactions`. These are the sticker options:
+
+| Option | What it does |
+|---|---|
+| `w`, `cx`, `cy` | Width and centre position. |
+| `react_dur` | How long the sticker stays on screen. |
+| `start` | Starts a GIF this many seconds in. |
+| `style` | `cam` adds a white border and tilt (`rot_react`), `round` masks the image to a circle (for example an emoji on black), and `plain` keeps the PNG's own transparency (arrows and circles). |
+| `flip` | `h` or `v` flips the image. |
+
+GIFs play from their first frame on the beat and loop if the beat is longer than the GIF. A pop's text badge moves to the lower slot when it has a sticker.
+
 Sound effects can be library files or `gen:whoosh`, `gen:ding`, `gen:impact` or `gen:tick`, which are synthesized with FFmpeg. The build prints the longest gap without a cut, popup or sound effect, so dead air is easy to spot.
 
 ```bash

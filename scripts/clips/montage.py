@@ -304,7 +304,7 @@ def build(cfg, opts, preset, manifest):
             sfx.append((sfx_path(cut['f'], opts.assets), shot['t0'], cut.get('v', 0.35)))
     norm = lambda t: re.sub('[^a-z0-9]', '', t.lower())
     sent_of = [max(i for i, sp in enumerate(spans) if sp <= w['s'] + 0.06) for w in words]
-    pulses, image_pops = [], []
+    pulses, image_pops, reactions = [], [], []
     side = 0
     for i, sentence in enumerate(cfg['sentences']):
         for pop in sentence.get('pops', []):
@@ -314,13 +314,19 @@ def build(cfg, opts, preset, manifest):
             dur = pop.get('dur', 0.9)
             if pop.get('text'):
                 side += 1
-                x, y = pop.get('pos', (540 + (110 if side % 2 else -110), 520 if side % 2 else 1480))
+                default = (540, 1500) if pop.get('react') else (540 + (110 if side % 2 else -110), 520 if side % 2 else 1480)
+                x, y = pop.get('pos', default)
                 rot = pop.get('rot', -6 if side % 2 else 5)
                 box = pop.get('color', '&H003C3CF0&')
                 txt = pop.get('textcolor', '&H00FFFFFF&')
                 lines.append(f"Dialogue: 3,{ass_time(t0)},{ass_time(t0 + dur)},Pop,,0,0,0,,{{\\pos({x},{y})\\frz{rot}\\3c{box}\\c{txt}\\fscx30\\fscy30\\t(0,90,\\fscx118\\fscy118)\\t(90,170,\\fscx100\\fscy100)\\fad(0,120)}}{pop['text']}")
             if pop.get('img'):
                 image_pops.append({'file': os.path.join(opts.library, pop['img']), 't': t0, 'dur': dur, 'w': pop.get('w', 820), 'y': pop.get('y', 360)})
+            if pop.get('react'):
+                path = pop['react'] if os.path.isabs(pop['react']) else os.path.join(opts.reactions, pop['react'])
+                reactions.append({'file': path, 't': t0 + pop.get('react_dt', 0), 'dur': pop.get('react_dur', 1.4), 'w': pop.get('w', 400),
+                                  'cx': pop.get('cx', 780), 'cy': pop.get('cy', 560), 'rot': pop.get('rot_react', 4),
+                                  'style': pop.get('style', 'cam'), 'flip': pop.get('flip', ''), 'start': pop.get('start', 0)})
             if pop.get('flash'):
                 lines.append(f"Dialogue: 4,{ass_time(t0)},{ass_time(t0 + 0.2)},Flash,,0,0,0,,{{\\an7\\pos(0,0)\\p1\\fad(0,170)}}m 0 0 l 1080 0 1080 1920 0 1920{{\\p0}}")
             if pop.get('zoom', True):
@@ -338,6 +344,11 @@ def build(cfg, opts, preset, manifest):
               '-ss', str(cfg.get('music_at', 0)), '-i', os.path.join(opts.assets, cfg['music']), '-loop', '1', '-t', str(total), '-i', card['file']]
     for p in image_pops:
         inputs += ['-loop', '1', '-t', str(total), '-i', p['file']]
+    for r in reactions:
+        if r['file'].lower().endswith('.gif'):
+            inputs += ['-ignore_loop', '0', '-ss', str(r['start']), '-t', f"{r['dur']:.3f}", '-i', r['file']]
+        else:
+            inputs += ['-loop', '1', '-t', f"{r['dur']:.3f}", '-i', r['file']]
     for path, _, _ in sfx:
         inputs += ['-i', path]
     # Zoom cuts: each punch snaps in one step and holds until the next shot, so the frame never
@@ -363,13 +374,30 @@ def build(cfg, opts, preset, manifest):
         graph.append(f"[{4 + k}:v]format=rgba,pad=iw+24:ih+24:12:12:white,scale=w='trunc({p['w']}*min(1,0.4+5*max(0,t-{t0:.2f}))/2)*2':h=-2:eval=frame[ip{k}]")
         graph.append(f"[{last}][ip{k}]overlay=(W-w)/2:{p['y']}:enable='between(t,{t0:.2f},{t1:.2f})'[v{k + 1}]")
         last = f'v{k + 1}'
+    # Reaction stickers: GIFs play from their first frame at the beat (looping if the beat is longer),
+    # 'cam' gets a white border and a slight tilt, 'round' is masked to a circle, 'plain' keeps its own alpha.
+    first_react = 4 + len(image_pops)
+    for k, r in enumerate(reactions):
+        t0, t1, w = r['t'], r['t'] + r['dur'], r['w']
+        chain = [f"fps={FPS}", 'format=rgba', f"scale={w}:-2"]
+        if 'h' in r['flip']: chain.append('hflip')
+        if 'v' in r['flip']: chain.append('vflip')
+        if r['style'] == 'round':
+            chain.append("geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='if(lte(hypot(X-W/2,Y-H/2),min(W,H)/2-2),255,0)'")
+        elif r['style'] == 'cam':
+            chain += ['pad=iw+16:ih+16:8:8:white', f"rotate={r['rot']}*PI/180:c=none:ow=rotw({r['rot']}*PI/180):oh=roth({r['rot']}*PI/180)"]
+        chain += [f"setpts=PTS-STARTPTS+{t0:.3f}/TB",
+                  f"scale=w='trunc(iw*min(1,0.7+3*max(0,t-{t0:.3f}))/2)*2':h=-2:eval=frame"]
+        graph.append(f"[{first_react + k}:v]{','.join(chain)}[re{k}]")
+        graph.append(f"[{last}][re{k}]overlay=x='{r['cx']}-w/2':y='{r['cy']}-h/2':eof_action=pass:enable='between(t,{t0:.3f},{t1:.3f})'[r{k}]")
+        last = f'r{k}'
     graph.append(f"[{last}]subtitles={captions}:fontsdir={FONT_DIR}[vout]")
     graph += [f"[0:a]volume={cfg.get('game_vol', 0.3)}[ga]",
               "[1:a]aresample=48000,aformat=channel_layouts=stereo,highpass=f=90,acompressor=threshold=0.1:ratio=3:attack=5:release=80:makeup=1.4,asplit[vo][vsc]",
               f"[2:a]aresample=48000,aformat=channel_layouts=stereo,atrim=0:{total},volume={cfg.get('music_vol', 0.16)},afade=t=out:st={total - 0.6:.2f}:d=0.6[mraw]",
               "[mraw][vsc]sidechaincompress=threshold=0.02:ratio=6:attack=10:release=300[mu]"]
     mix = ['[ga]', '[vo]', '[mu]']
-    first_sfx = 4 + len(image_pops)
+    first_sfx = 4 + len(image_pops) + len(reactions)
     for k, (_, at, vol) in enumerate(sfx):
         ms = int(at * 1000)
         graph.append(f"[{first_sfx + k}:a]aresample=48000,aformat=channel_layouts=stereo,volume={vol},adelay={ms}|{ms}[s{k}]")
@@ -394,6 +422,7 @@ def main():
     parser.add_argument('--library', required=True, help='folder from fetch-bloxclips.js with manifest.json and the clips')
     parser.add_argument('--assets', required=True, help='folder with the music and sound effect files named in the config')
     parser.add_argument('--card', help='Roblox game page card PNG (default: <library>/roblox-card.png)')
+    parser.add_argument('--reactions', help='folder with reaction GIFs/PNGs named by "react" pops (default: <library>/reactions)')
     parser.add_argument('--preset', default='minerscave')
     parser.add_argument('--work', default='/tmp/montage')
     parser.add_argument('--out', default='/tmp/montage/out')
@@ -403,6 +432,7 @@ def main():
                         help='use a recorded voiceover for one Short instead of text-to-speech (needs faster-whisper)')
     opts = parser.parse_args()
     opts.voice_files = dict(v.split('=', 1) for v in opts.voice_file)
+    opts.reactions = opts.reactions or os.path.join(opts.library, 'reactions')
     opts.card = opts.card or os.path.join(opts.library, 'roblox-card.png')
     os.makedirs(opts.out, exist_ok=True)
     ensure_fonts()
