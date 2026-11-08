@@ -192,7 +192,17 @@ def recorded_voice(path, cfg, preset, code, max_gap=0.22, keep=0.08):
         if not raw or w.start >= raw[-1]['s'] + 0.01:
             raw.append({'w': w.word.strip(), 's': w.start, 'e': w.end})
 
+    raw = [w for w in raw if len(re.sub('[^A-Za-z0-9]', '', w['w'])) > 1 or re.sub('[^A-Za-z0-9]', '', w['w']).lower() in ('a', 'i')
+           or re.sub('[^0-9]', '', w['w'])]
     game = preset.get('creator', '').lower()
+    merged = []
+    for w in raw:
+        pair = (re.sub('[^a-z]', '', merged[-1]['w'].lower()) + re.sub('[^a-z]', '', w['w'].lower())) if merged else ''
+        if game and len(game.split()) == 1 and pair.rstrip('s') in (game, game.rstrip('s')) and not merged[-1]['w'][-1:] in '.,!?':
+            merged[-1] = {'w': merged[-1]['w'] + w['w'], 's': merged[-1]['s'], 'e': w['e']}
+        else:
+            merged.append(dict(w))
+    raw = merged
     fixes = cfg.get('caption_fixes', {})
     for w in raw:
         letters = re.sub('[^a-z]', '', w['w'].lower())

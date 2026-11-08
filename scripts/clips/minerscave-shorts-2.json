@@ -1,6 +1,7 @@
 [
  {
   "name": "minerscave-4",
+  "caption_fixes": {"steal": "steel"},
   "layout": "fill",
   "pop_size": 104,
   "captions": {"font": "TTS Cap XBold", "size": 100, "y": 1270, "outline": 6, "highlight": "&H0000E1FF&"},
