@@ -10,7 +10,6 @@ Nothing is uploaded.
 import argparse, asyncio, difflib, json, os, re, subprocess, sys, urllib.request, wave
 
 import numpy as np
-import edge_tts
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FONT_DIR = os.path.expanduser('~/.cache/clips-fonts')
@@ -70,6 +69,7 @@ def ensure_fonts():
 
 
 async def tts(text, out, voice, rate, attempts=4):
+    import edge_tts
     for attempt in range(attempts):
         try:
             communicate = edge_tts.Communicate(text, voice, rate=rate, boundary='WordBoundary')
