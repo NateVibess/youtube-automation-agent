@@ -102,6 +102,17 @@ python3 scripts/clips/montage.py scripts/clips/huss-valley-shorts.json --preset 
 
 Each Short in `minerscave-shorts.json` lists its sentences, the clip ids and start offsets under each sentence, and the music and sound effects. The Minerscave library has no music or sound effects, so the example uses the ones from the BloxClips boxing campaign. `--preset minerscave` is the default and warns when a Short falls outside 15–30s or never says "Minerscave" or the code.
 
+## Captioning finished clips
+
+`caption.py` burns captions into videos that are already edited and changes nothing else. Size, frame rate, frame timing and length stay the same, the audio is copied bit for bit, and the output is muxed with faststart. Phrases are 2–4 words long, snap in from 75% to 100% over 80 ms and then hold. Story words are yellow and the rest is white with a dark outline. Numbers, acronyms such as GTA or NPCs, and the campaign words are highlighted automatically. Add others with `--also-highlight`. Captions sit 25.5% of the height above the bottom (`--margin`). That clears in-game hotbars and lands under the gameplay band of a letterboxed clip.
+
+Speech is transcribed with `medium.en` at float32 precision, which gives the same result on every run. Whisper sometimes drops a whole stretch, so `small.en` words fill any gap of more than 0.6 s. Run with `--dry-run` first to print the phrases, then correct what was misheard with `--fix "find=>replace"`. An empty replacement deletes the phrase, for example background song lyrics. Profanity is masked in the captions unless you pass `--keep-profanity`.
+
+```bash
+python3 scripts/clips/caption.py "clips folder" --out-dir "clips folder/captioned" --dry-run
+python3 scripts/clips/caption.py "clips folder" --out-dir "clips folder/captioned" --fix "The plant,=>The plane," --also-highlight parachute
+```
+
 ## Layout
 
 - **Corner webcam detected:** a split screen. The chart crop goes on top, above the webcam and left of the TradingView watchlist. Set `CLIPS_CHART_RIGHT=0.745` to change that edge. The face goes on the bottom, with a hook box on the seam and word-by-word captions above the face.
